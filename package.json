@@ -1,0 +1,21 @@
+{
+  "name": "dag-tacit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch": "bun scripts/fetch-blocks.mjs",
+    "build": "bun scripts/build-dag.mjs",
+    "car": "bun scripts/create-car.mjs",
+    "ipfs:import": "bun scripts/import-car.mjs",
+    "fixtures": "bun scripts/fetch-test-fixtures.mjs",
+    "full": "bun scripts/full.mjs",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ipld/dag-cbor": "^9.2.0",
+    "@ipld/car": "^5.3.0",
+    "multiformats": "^13.1.0",
+    "@noble/hashes": "^1.5.0"
+  }
+}

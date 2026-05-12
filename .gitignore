@@ -1,0 +1,12 @@
+# Generated output
+out/
+node_modules/
+*.car
+*.log
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
