@@ -1,5 +1,7 @@
 # dag-tacit
 
+> **DRAFT** — not yet finalized for v1. Schema and APIs may change.
+
 DAG-CBOR index builder for the Tacit protocol on Bitcoin. Implements the [dag-tacit SPEC](./SPEC.md).
 
 ## Architecture
@@ -7,14 +9,23 @@ DAG-CBOR index builder for the Tacit protocol on Bitcoin. Implements the [dag-ta
 ```
 dag-tacit/
 ├── scripts/
-│   ├── fetch-blocks.mjs    # Fetch Bitcoin blocks with Tacit txns
-│   ├── build-dag.mjs       # Build DAG-CBOR nodes
-│   └── create-car.mjs      # Assemble CAR file
+│   ├── fetch-blocks.ts     # Fetch Bitcoin blocks with Tacit txns
+│   ├── build-dag.ts        # Build DAG-CBOR nodes
+│   ├── create-car.ts       # Assemble CAR file
+│   └── import-car.ts       # Import CAR into IPFS
 ├── src/
-│   ├── dag-cbor.mjs        # CID & encoding utilities
-│   ├── envelope.mjs        # Tacit envelope detection
-│   ├── nodes.mjs           # Block/Tx/VinEntry/VoutEntry builders
-│   └── car.mjs             # CAR file assembly
+│   ├── index.ts            # Barrel export for external consumers
+│   ├── types.ts            # Shared TypeScript interfaces
+│   ├── dag-cbor.ts         # CID & encoding utilities
+│   ├── envelope.ts         # Tacit envelope detection
+│   ├── nodes.ts            # Block/Tx/VinEntry/VoutEntry builders
+│   ├── car.ts              # CAR file assembly
+│   ├── config.ts           # .env config loader
+│   └── rpc.ts              # Bitcoin JSON-RPC client
+├── tests/
+│   ├── *.test.ts            # Bun test suite
+│   └── fixtures/            # 25 genesis block JSON fixtures
+├── dist/                    # Build output (minified JS + .d.ts)
 └── out/
     ├── tacit-blocks/       # Compact per-block Tacit tx artifacts (JSON)
     ├── dag-nodes/          # DAG-CBOR nodes (JSON)
@@ -36,7 +47,7 @@ bun run full
 
 # Or run steps individually:
 bun run fetch    # Download blocks with Tacit transactions
-bun run build    # Build DAG-CBOR nodes
+bun run dag      # Build DAG-CBOR nodes
 bun run car      # Create CAR file
 ```
 
@@ -74,7 +85,7 @@ Configuration via `.env`:
 - `BITCOIN_NETWORK` - Network type (mainnet/signet)
 - `START_HEIGHT` - Default start height (948240 for mainnet)
 
-### `bun run build`
+### `bun run dag`
 
 Processes compact Tacit block artifacts into DAG-CBOR nodes per the dag-tacit SPEC.
 
@@ -97,6 +108,18 @@ bun run car
 
 # Specific Bitcoin-height range
 bun run car 948242 949069
+```
+
+### `bun run build`
+
+Builds the library for distribution.
+
+- Bundles `src/index.ts` into minified `dist/index.js` with sourcemap
+- Emits TypeScript declarations (`dist/*.d.ts`)
+- Output is consumable by other libraries, browsers, or bundlers
+
+```bash
+bun run build
 ```
 
 ## Output Structure
@@ -137,10 +160,10 @@ Implements the normative DAG-CBOR types from the SPEC:
 
 | Node | SPEC Type | Fields |
 |------|--------------|--------|
-| `Block` | Block IPLD | bitcoin_block, block_hash, last_tacit_block, prev, tacit_block, tacit_tx_count, time, tx_count, txs, v |
-| `Tx` | Transaction IPLD | v, tx_index, txid, fee, version, locktime, vin, vout |
-| `VinEntry` | VinEntry IPLD | v, txid, vout, sequence, witness, script_sig, value, prevout_script_pubkey |
-| `VoutEntry` | VoutEntry IPLD | v, value, script_pub_key |
+| `Block` | Block IPLD | bitcoin_block, block_hash, prev, tacit_block, tacit_tx_count, time, tx_count, txs, v |
+| `Tx` | Transaction IPLD | tx_index, txid, fee, version, locktime, vin, vout |
+| `VinEntry` | VinEntry IPLD | txid, vout, sequence, witness, script_sig, value, prevout_script_pubkey |
+| `VoutEntry` | VoutEntry IPLD | value, script_pub_key |
 | Range Root | Range Root IPLD | v, genesis_height, from, to, tacit_block_count, tacit_tx_count, tacit_block_index |
 
 All monetary values in **satoshis** (uint). All hashes as **bytes[32]**.
@@ -202,28 +225,38 @@ Daily CAR files are split by block timestamp at UTC/GMT midnight boundaries.
 Import a CAR into a local IPFS/Kubo node:
 
 ```bash
-bun run ipfs:import -- --block 948242
-bun run ipfs:import -- --range 948242 949069
-bun run ipfs:import -- --day 2026-05-12
+bun run import -- --block 948242
+bun run import -- --range 948242 949069
+bun run import -- --day 2026-05-12
 
 # Short aliases and simple range syntax
-bun run ipfs:import -- -b 948242
-bun run ipfs:import -- -r 948242-948245
-bun run ipfs:import -- -d 2026-05-12
+bun run import -- -b 948242
+bun run import -- -r 948242-948245
+bun run import -- -d 2026-05-12
+
+# Batch import individual block CARs by BTC height range
+bun run import -- --from 948242 --to 948272
+
+# Partial ranges: from-only uses chain tip as end; to-only uses last stored block (or genesis) as start
+bun run import -- --from 948242        # import from 948242 up to current chain tip
+bun run import -- --to 948272         # import from last stored block up to 948272
 ```
 
-The importer defaults to `http://127.0.0.1:5001` for the IPFS API and prints `dag/get` commands for reading DAG-CBOR roots. It also prints gateway URLs using `http://127.0.0.1:8080`, but local HTTP gateway behavior for raw DAG-CBOR roots depends on the IPFS implementation and requested content negotiation. Override endpoints with `--api`, `--gateway`, or environment variables `IPFS_API_URL` and `IPFS_GATEWAY_URL`.
+The importer reads `IPFS_API_URL` and `IPFS_GATEWAY_URL` from `.env` (defaulting to local Kubo at `http://127.0.0.1:5001` and `http://127.0.0.1:8080`). Override per-run with `--api` and `--gateway` flags.
 
 ## Development
 
 ```bash
-# Type check (no TS, but validates imports)
-bun run --check scripts/fetch-blocks.mjs
+# Type check
+bun run typecheck
 
 # Run tests
 bun test
 
-# Run full fetch/build/CAR pipeline
+# Build dist (minified JS + type declarations)
+bun run build
+
+# Run full fetch/dag/CAR pipeline
 bun run full 948242 949069 --force
 ```
 
@@ -238,14 +271,11 @@ bun run full 948242 949069 --force
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (fixtures auto-fetched if BITCOIN_RPC_URL is set)
 bun test
 
-# Fetch mainnet RPC-backed test fixtures
-bun run fixtures
-
 # Run specific test file
-bun test tests/envelope.test.mjs
+bun test tests/envelope.test.ts
 
 # Run with coverage
 bun test --coverage
@@ -253,4 +283,4 @@ bun test --coverage
 
 ## License
 
-MIT - Same as tacitscan
+[WTFPL](./LICENSE) — Do What The Fuck You Want To

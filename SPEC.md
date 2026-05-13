@@ -50,6 +50,7 @@ Additional notation used below:
 | `bytes[N]` | Byte string of exactly `N` octets. |
 | `CID \| null` | Either a CID link or CBOR null. |
 | `bytes[]` | DAG-CBOR array of byte strings. |
+| `&WitnessData` | CID link to a DAG-CBOR block containing a single witness item as a byte string. Used for witness stack elements. |
 
 ## Common IPLD Encoding
 
@@ -57,7 +58,7 @@ All DAG-Tacit IPLD blocks MUST be serialized with DAG-CBOR, multicodec `0x71`. C
 
 DAG-CBOR links are encoded using CBOR tag 42.
 
-The `v` field is the DAG-Tacit schema version. Every `Block`, `Tx`, `VinEntry`, `VoutEntry`, and range root MUST contain `v` with value `1`. This value MUST NOT be confused with CID version.
+The `v` field is the DAG-Tacit schema version. `Block` and range root MUST contain `v` with value `1`. `Tx`, `VinEntry`, and `VoutEntry` do not carry `v`. This value MUST NOT be confused with CID version.
 
 The tacit block CID index is a string-keyed map to CIDs and does not carry `v`.
 
@@ -86,7 +87,7 @@ Implementation note: an indexer MAY prefilter candidates before envelope decodin
 ```ipldsch
 type Block struct {
   bitcoin_block Uint
-  block_hash Bytes
+  block_hash &RawHash
   prev nullable &Block
   tacit_block Uint
   tacit_tx_count Uint
@@ -102,7 +103,7 @@ type TxList [&Tx]
 | Field | Type | Description |
 |-------|------|-------------|
 | `bitcoin_block` | `uint` | Bitcoin block height. |
-| `block_hash` | `bytes[32]` | 32-byte block header hash in the byte order produced by Bitcoin Core before hexadecimal RPC display. |
+| `block_hash` | `&RawHash` | CID link to a 32-octet raw block containing the block header hash in the byte order produced by Bitcoin Core before hexadecimal RPC display. |
 | `prev` | `CID \| null` | CID of the predecessor `Block`, or null if this is the head anchor in the DAG instance. |
 | `tacit_block` | `uint` | Zero-based tacit-only block index within the DAG instance. |
 | `tacit_tx_count` | `uint` | Number of transactions in the array referenced by `txs`. |
@@ -129,8 +130,7 @@ type Tx struct {
   fee Uint
   locktime Uint
   tx_index Uint
-  txid Bytes
-  v Uint
+  txid &RawHash
   version Uint
   vin &VinList
   vout &VoutList
@@ -145,8 +145,7 @@ type VoutList [&VoutEntry]
 | `fee` | `uint` | Transaction fee in satoshis. |
 | `locktime` | `uint` | Bitcoin transaction `locktime`. |
 | `tx_index` | `uint` | Index of this transaction in the parent Bitcoin block’s `tx` array. |
-| `txid` | `bytes[32]` | Transaction identifier. |
-| `v` | `uint` | Schema version; MUST be `1`. |
+| `txid` | `&RawHash` | CID link to a 32-octet raw block containing the transaction identifier. |
 | `version` | `uint` | Bitcoin transaction `version`. |
 | `vin` | `CID` | CID of a DAG-CBOR array of `VinEntry` CIDs. Array order MUST equal Bitcoin `vin[]` order. |
 | `vout` | `CID` | CID of a DAG-CBOR array of `VoutEntry` CIDs. Array order MUST equal Bitcoin `vout[]` order. |
@@ -164,12 +163,13 @@ type VinEntry struct {
   prevout_script_pubkey Bytes
   script_sig Bytes
   sequence Uint
-  txid Bytes
-  v Uint
+  txid &RawHash
   value Uint
   vout Uint
-  witness [Bytes]
+  witness &WitnessList
 }
+
+type WitnessList [&WitnessData]
 ```
 
 | Field | Type | Description |
@@ -177,11 +177,10 @@ type VinEntry struct {
 | `prevout_script_pubkey` | `bytes` | Decoded `prevout.scriptPubKey.hex`; MUST be zero length if absent. |
 | `script_sig` | `bytes` | Decoded `scriptSig.hex`; MUST be zero length if absent. |
 | `sequence` | `uint` | Bitcoin input `sequence`. |
-| `txid` | `bytes[32]` | Previous output txid; MUST be 32 zero octets for coinbase. |
-| `v` | `uint` | Schema version; MUST be `1`. |
+| `txid` | `&RawHash` | CID link to a 32-octet raw block containing the previous output txid; MUST link to 32 zero octets for coinbase. |
 | `value` | `uint` | Previous output value in satoshis; MUST be `0` if `prevout` is absent. |
 | `vout` | `uint` | Previous output index. |
-| `witness` | `bytes[]` | Witness stack. Each element is the raw bytes of one witness item. MUST be empty when no witness is present. |
+| `witness` | `&WitnessList` | CID link to a DAG-CBOR array of `WitnessData` CIDs. Each element is a CID link to a DAG-CBOR block containing one witness item as a byte string. MUST link to an empty array when no witness is present. |
 
 Tacit envelope bytes and opcode MUST NOT be duplicated in separate DAG fields. Consumers MUST obtain them by parsing `witness[1]` according to TACIT-SPEC and the inclusion rules above.
 
@@ -195,7 +194,6 @@ Tacit envelope bytes and opcode MUST NOT be duplicated in separate DAG fields. C
 ```ipldsch
 type VoutEntry struct {
   script_pub_key Bytes
-  v Uint
   value Uint
 }
 ```
@@ -203,7 +201,6 @@ type VoutEntry struct {
 | Field | Type | Description |
 |-------|------|-------------|
 | `script_pub_key` | `bytes` | Decoded `scriptPubKey.hex`. |
-| `v` | `uint` | Schema version; MUST be `1`. |
 | `value` | `uint` | Output value in satoshis. |
 
 ## Range Root IPLD
@@ -293,7 +290,7 @@ Decoded `Block`:
 ```json
 {
   "bitcoin_block": 948242,
-  "block_hash": "00000000000000000001faaa331b2bcbb9896e97d0c40ad2b78855a1f769b832",
+  "block_hash": "bafkreih5qnrhys5uqdcmrfxxdw2oa6ywd5qw2mxq7hfwpnkci2knnxkv24",
   "prev": null,
   "tacit_block": 0,
   "tacit_tx_count": 2,
@@ -326,7 +323,7 @@ Decoded `Block`:
 ```json
 {
   "bitcoin_block": 948247,
-  "block_hash": "000000000000000000021039112c5e7ae8fa5a34288bd419387cf43be22d8143",
+  "block_hash": "bafkreigfj3kzv6hj3ad4s5w3qy24tfkuy2mjiit7j5gzq3q3t7q7y7y7y7",
   "prev": "bafyreifiyb6xkabgywkuuiwvu4sgs6ph64qe6eyvyu5nixzmowypiuippy",
   "tacit_block": 1,
   "tacit_tx_count": 1,

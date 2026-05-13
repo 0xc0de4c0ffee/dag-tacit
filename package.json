@@ -1,21 +1,28 @@
 {
   "name": "dag-tacit",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "fetch": "bun scripts/fetch-blocks.mjs",
-    "build": "bun scripts/build-dag.mjs",
-    "car": "bun scripts/create-car.mjs",
-    "ipfs:import": "bun scripts/import-car.mjs",
-    "fixtures": "bun scripts/fetch-test-fixtures.mjs",
-    "full": "bun scripts/full.mjs",
-    "test": "bun test"
+    "fetch": "bun scripts/fetch-blocks.ts",
+    "dag": "bun scripts/build-dag.ts",
+    "car": "bun scripts/create-car.ts",
+    "import": "bun scripts/import-car.ts",
+    "full": "bun scripts/full.ts",
+    "build": "bun build src/index.ts --outdir dist --minify --sourcemap --target bun && tsc && sed -i '' \"s/from '\\.\\/\\(.*\\)\\.ts'/from '.\\/\\1.js'/g\" dist/*.d.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@ipld/dag-cbor": "^9.2.0",
     "@ipld/car": "^5.3.0",
     "multiformats": "^13.1.0",
     "@noble/hashes": "^1.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.0.0"
   }
 }
