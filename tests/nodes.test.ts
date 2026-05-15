@@ -42,7 +42,7 @@ describe('DAG node builders', () => {
     const witnessCids = vin.txinwitness!.map(w => encodeNode(hexToBytes(w)).cid)
     const { cid: witnessArrayCid } = encodeNode(witnessCids)
     const node = buildVinEntry(vin, witnessArrayCid)
-    expect(Object.keys(node)).toEqual(['txid', 'vout', 'sequence', 'witness', 'script_sig', 'value', 'prevout_script_pubkey'])
+    expect(Object.keys(node)).toEqual(['txid', 'vout', 'sequence', 'witness', 'sig', 'value', 'prevout'])
     expect(node.value).toBe(123)
     expect(node.witness).toBeInstanceOf(CID)
     expect(node.txid).toBeInstanceOf(CID)
@@ -51,7 +51,7 @@ describe('DAG node builders', () => {
   test('builds VoutEntry with exact Section 8 fields', () => {
     const vout = fixtureBlock().tx[0].vout[0]
     const node = buildVoutEntry(vout)
-    expect(Object.keys(node)).toEqual(['value', 'script_pub_key'])
+    expect(Object.keys(node)).toEqual(['value', 'pubkey'])
     expect(node.value).toBe(1)
   })
 
@@ -61,16 +61,15 @@ describe('DAG node builders', () => {
     expect(result!.tacitTxCount).toBe(1)
     const blockEntry = result!.cids.get('block')!
     expect('node' in blockEntry).toBe(true)
-    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['bitcoin_block', 'block_hash', 'prev', 'tacit_block', 'tacit_tx_count', 'time', 'tx_count', 'txs', 'v'])
+    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v'])
     const block = dagCbor.decode(result!.cids.get('block')!.bytes) as Record<string, unknown>
-    expect(new Set(Object.keys(block))).toEqual(new Set(['bitcoin_block', 'block_hash', 'prev', 'tacit_block', 'tacit_tx_count', 'time', 'tx_count', 'txs', 'v']))
+    expect(new Set(Object.keys(block))).toEqual(new Set(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v']))
     expect(block.v).toBe(1)
-    expect(block.tacit_block).toBe(0)
-    expect(block.prev).toBeNull()
-    expect(block.bitcoin_block).toBe(948242)
-    expect(block.block_hash).toBeInstanceOf(CID)
-    expect(block.tacit_tx_count).toBe(1)
-    expect(block.tx_count).toBe(1)
+    expect(block.block).toBe(0)
+    expect(block.parent).toBeNull()
+    expect(block.height).toBe(948242)
+    expect(block.hash).toBeInstanceOf(CID)
+    expect(block.tx).toBe(1)
     expect(block.time).toBe(1778117538)
     expect(block.txs).toBeInstanceOf(CID)
   })

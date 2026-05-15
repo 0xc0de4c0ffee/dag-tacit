@@ -11,8 +11,9 @@ dag-tacit/
 ├── scripts/
 │   ├── fetch-blocks.ts     # Fetch Bitcoin blocks with Tacit txns
 │   ├── build-dag.ts        # Build DAG-CBOR nodes
-│   ├── create-car.ts       # Assemble CAR file
-│   └── import-car.ts       # Import CAR into IPFS
+│   ├── create-car.ts       # Assemble CAR files (block/range/daily)
+│   ├── import-car.ts       # Import CAR into IPFS
+│   └── full.ts             # Pipeline: fetch → build → car
 ├── src/
 │   ├── index.ts            # Barrel export for external consumers
 │   ├── types.ts            # Shared TypeScript interfaces
@@ -21,6 +22,7 @@ dag-tacit/
 │   ├── nodes.ts            # Block/Tx/VinEntry/VoutEntry builders
 │   ├── car.ts              # CAR file assembly
 │   ├── config.ts           # .env config loader
+│   ├── reorg.ts            # Reorg detection logic
 │   └── rpc.ts              # Bitcoin JSON-RPC client
 ├── tests/
 │   ├── *.test.ts            # Bun test suite
@@ -42,18 +44,19 @@ bun install
 cp .env.example .env
 # Edit .env and set your BITCOIN_RPC_URL
 
-# Run full pipeline
+# Run full pipeline (per-block CARs only)
 bun run full
 
 # Or run steps individually:
-bun run fetch    # Download blocks with Tacit transactions
-bun run dag      # Build DAG-CBOR nodes
-bun run car      # Create CAR file
+bun run fetch       # Download blocks with Tacit transactions
+bun run dag         # Build DAG-CBOR nodes
+bun run car         # Create per-block CAR files
+bun run car:range   # Also create range + daily CARs
 ```
 
 ## Commands
 
-### `bun run fetch [start] [end] [-t N]`
+### `bun run fetch [--from N] [--to N] [-t N] [--force] [--help]`
 
 Fetches Bitcoin blocks containing Tacit envelopes from RPC.
 
@@ -69,6 +72,7 @@ Fetches Bitcoin blocks containing Tacit envelopes from RPC.
   3. Payload decode succeeds (valid opcode)
 - Tracks opcode statistics
 - Supports `-t N`, `--thread N`, or `--threads N` to control concurrent RPC fetches
+- On resume, rechecks the last `REORG_DEPTH` blocks for chain reorganizations and auto-repairs
 
 This keeps CPU use low on large Bitcoin blocks: non-Tacit transactions are rejected by a string scan before any witness hex decoding, script parsing, or payload validation. The magic-byte prefilter is only an optimization; a transaction is included only after full Tacit envelope decode and payload decode succeed.
 
@@ -77,37 +81,46 @@ This keeps CPU use low on large Bitcoin blocks: non-Tacit transactions are rejec
 bun run fetch
 
 # Fetch specific range
-bun run fetch 948240 949000 -t 5
+bun run fetch --from 948242 --to 949000 -t 5
 ```
 
 Configuration via `.env`:
 - `BITCOIN_RPC_URL` - Required. Bitcoin RPC endpoint
 - `BITCOIN_NETWORK` - Network type (mainnet/signet)
-- `START_HEIGHT` - Default start height (948240 for mainnet)
+- `START_HEIGHT` - Default start height (948242 for mainnet)
+- `REORG_DEPTH` - Blocks to recheck for chain reorganizations (default: 6)
 
-### `bun run dag`
+### `bun run dag [--from N] [--to N] [--force] [--help]`
 
 Processes compact Tacit block artifacts into DAG-CBOR nodes per the dag-tacit SPEC.
 
 - Saves to `out/dag-nodes/`
 - Builds Block, Tx, VinEntry, VoutEntry nodes
 - Links nodes via CIDs
-- Tracks tacit_block index and prev links
+- Tracks block index and parent links
 
-### `bun run car [start] [end]`
+### `bun run car [--from N] [--to N] [--force] [--help]`
 
-Assembles DAG nodes into a CAR file.
+Assembles DAG nodes into per-block CAR files (blocks only, no range/daily).
 
-- Creates range root (SPEC “Range Root IPLD”)
-- Creates tacit block CID index (SPEC “Tacit Block Index IPLD”)
-- Outputs CAR v1 with all blocks
+- Creates per-block CARs in `out/car/blocks/<YYYY-MM-DD>/`
+- Each CAR roots at the Block node with its linked tx/vin/vout nodes
+- Maintains `index.json` for import lookup
 
 ```bash
-# Default output
+# Per-block CARs (default)
 bun run car
 
 # Specific Bitcoin-height range
-bun run car 948242 949069
+bun run car --from 948242 --to 949069
+```
+
+### `bun run car:range [--from N] [--to N] [--force] [--help]`
+
+Creates a single range CAR plus daily CARs in addition to per-block CARs.
+
+```bash
+bun run car:range
 ```
 
 ### `bun run build`
@@ -142,9 +155,11 @@ out/
     ├── index.json
     ├── blocks/
     │   ├── index.json
-    │   ├── dag-tacit-0-948242.car
-    │   ├── dag-tacit-1-948247.car
-    │   └── ...................car
+    │   └── 2026-05-07/
+    │       ├── index.json
+    │       ├── dag-tacit-0-948242.car
+    │       ├── dag-tacit-1-948247.car
+    │       └── ...................car
     ├── range/
     │   ├── index.json
     │   └── dag-tacit-0-544-948242-949069.car
@@ -160,11 +175,11 @@ Implements the normative DAG-CBOR types from the SPEC:
 
 | Node | SPEC Type | Fields |
 |------|--------------|--------|
-| `Block` | Block IPLD | bitcoin_block, block_hash, prev, tacit_block, tacit_tx_count, time, tx_count, txs, v |
-| `Tx` | Transaction IPLD | tx_index, txid, fee, version, locktime, vin, vout |
-| `VinEntry` | VinEntry IPLD | txid, vout, sequence, witness, script_sig, value, prevout_script_pubkey |
-| `VoutEntry` | VoutEntry IPLD | value, script_pub_key |
-| Range Root | Range Root IPLD | v, genesis_height, from, to, tacit_block_count, tacit_tx_count, tacit_block_index |
+| `Block` | Block IPLD | height, hash, parent, block, tx, time, txs, v |
+| `Tx` | Transaction IPLD | index, txid, fee, version, locktime, vin, vout |
+| `VinEntry` | VinEntry IPLD | txid, vout, sequence, witness, sig, value, prevout |
+| `VoutEntry` | VoutEntry IPLD | value, pubkey |
+| Range Root | Range Root IPLD | v, genesis, from, to, blocks, tx, index |
 
 All monetary values in **satoshis** (uint). All hashes as **bytes[32]**.
 
@@ -181,7 +196,7 @@ All monetary values in **satoshis** (uint). All hashes as **bytes[32]**.
 | VinEntry IPLD | ✅ | All fields, witness as bytes[] |
 | VoutEntry IPLD | ✅ | All fields |
 | Range Root IPLD | ✅ | All fields, block index link |
-| Tacit Block Index IPLD | ✅ | String keys "0", "1", ... |
+| Block Index IPLD | ✅ | String keys "0", "1", ... |
 | Mapping from Bitcoin Core JSON | ✅ | `floor(btc * 1e8 + 0.5)` |
 | Deterministic Encoding | ✅ | Exact field sets |
 
@@ -204,7 +219,7 @@ All monetary values in **satoshis** (uint). All hashes as **bytes[32]**.
 The output CAR file contains:
 
 1. **Range Root** - Navigation metadata for the archive
-2. **Tacit Block CID Index** - Map of `"0", "1", ...` to Block CIDs
+2. **Block Index** - Map of `"0", "1", ...` to Block CIDs
 3. **Block Nodes** - One per tacit block
 4. **Tx Arrays** - CID-linked arrays of Tx nodes
 5. **Tx Nodes** - Individual transactions
@@ -213,7 +228,7 @@ The output CAR file contains:
 CAR files are written to:
 
 ```text
-out/car/blocks/dag-tacit-<tacit>-<btc>.car
+out/car/blocks/<YYYY-MM-DD>/dag-tacit-<tacit>-<btc>.car
 out/car/range/dag-tacit-<tacit-from>-<tacit-to>-<btc-from>-<btc-to>.car
 out/car/daily/<YYYY-MM-DD>/dag-tacit-<tacit-from>-<tacit-to>-<btc-from>-<btc-to>.car
 ```
@@ -225,21 +240,21 @@ Daily CAR files are split by block timestamp at UTC/GMT midnight boundaries.
 Import a CAR into a local IPFS/Kubo node:
 
 ```bash
-bun run import -- --block 948242
-bun run import -- --range 948242 949069
-bun run import -- --day 2026-05-12
+bun run import --block 948242
+bun run import --range 948242 949069
+bun run import --day 2026-05-12
 
 # Short aliases and simple range syntax
-bun run import -- -b 948242
-bun run import -- -r 948242-948245
-bun run import -- -d 2026-05-12
+bun run import -b 948242
+bun run import -r 948242-948245
+bun run import -d 2026-05-12
 
 # Batch import individual block CARs by BTC height range
-bun run import -- --from 948242 --to 948272
+bun run import --from 948242 --to 948272
 
 # Partial ranges: from-only uses chain tip as end; to-only uses last stored block (or genesis) as start
-bun run import -- --from 948242        # import from 948242 up to current chain tip
-bun run import -- --to 948272         # import from last stored block up to 948272
+bun run import --from 948242        # import from 948242 up to current chain tip
+bun run import --to 948272         # import from last stored block up to 948272
 ```
 
 The importer reads `IPFS_API_URL` and `IPFS_GATEWAY_URL` from `.env` (defaulting to local Kubo at `http://127.0.0.1:5001` and `http://127.0.0.1:8080`). Override per-run with `--api` and `--gateway` flags.

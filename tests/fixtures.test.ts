@@ -150,16 +150,16 @@ describe('nodes across 25 blocks', () => {
       expect('node' in blockEntry).toBe(true)
       if ('node' in blockEntry) {
         expect(Object.keys(blockEntry.node as object)).toEqual([
-          'bitcoin_block', 'block_hash', 'prev', 'tacit_block', 'tacit_tx_count', 'time', 'tx_count', 'txs', 'v'
+          'height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v'
         ])
       }
 
       // Verify prev linkage except genesis
       const blockNode = (result.cids.get('block')! as { node: Record<string, unknown> }).node
       if (height === GENESIS) {
-        expect(blockNode.prev).toBeNull()
+        expect(blockNode.parent).toBeNull()
       } else {
-        expect(blockNode.prev).toBeInstanceOf(CID)
+        expect(blockNode.parent).toBeInstanceOf(CID)
       }
     })
   }
@@ -172,7 +172,7 @@ describe('nodes across 25 blocks', () => {
     const witnessCids = vin.txinwitness!.map(w => encodeNode(hexToBytes(w)).cid)
     const { cid: witnessArrayCid } = encodeNode(witnessCids)
     const node = buildVinEntry(vin, witnessArrayCid)
-    expect(Object.keys(node)).toEqual(['txid', 'vout', 'sequence', 'witness', 'script_sig', 'value', 'prevout_script_pubkey'])
+    expect(Object.keys(node)).toEqual(['txid', 'vout', 'sequence', 'witness', 'sig', 'value', 'prevout'])
     expect(node.txid).toBeInstanceOf(CID)
     expect(node.witness).toBeInstanceOf(CID)
   })
@@ -180,7 +180,7 @@ describe('nodes across 25 blocks', () => {
   test('genesis block — buildVoutEntry on real vout', () => {
     const vout = ALL_BLOCKS[0].tx[0].vout[0]
     const node = buildVoutEntry(vout)
-    expect(Object.keys(node)).toEqual(['value', 'script_pub_key'])
+    expect(Object.keys(node)).toEqual(['value', 'pubkey'])
     expect(node.value).toBeGreaterThanOrEqual(0)
   })
 })
@@ -209,7 +209,7 @@ describe('car across 25 blocks', () => {
       const rootBlock = await reader.get(roots[0])
       expect(rootBlock).toBeDefined()
       const decoded = dagCbor.decode(rootBlock!.bytes) as Record<string, unknown>
-      expect(decoded.bitcoin_block).toBe(height)
+      expect(decoded.height).toBe(height)
     })
   }
 
@@ -225,8 +225,8 @@ describe('car across 25 blocks', () => {
     expect(rootBlock).toBeDefined()
     const root = dagCbor.decode(rootBlock!.bytes) as Record<string, unknown>
     expect(root.v).toBe(1)
-    expect(root.tacit_block_count).toBe(VALID_COUNT)
-    expect(root.genesis_height).toBe(GENESIS)
+    expect(root.blocks).toBe(VALID_COUNT)
+    expect(root.genesis).toBe(GENESIS)
   })
 
   test('blockIndex uses decimal string keys for valid blocks', () => {
@@ -259,12 +259,12 @@ describe('car across 25 blocks', () => {
     })
     const decoded = dagCbor.decode(root.bytes) as Record<string, unknown>
     expect(new Set(Object.keys(decoded))).toEqual(
-      new Set(['v', 'genesis_height', 'from', 'to', 'tacit_block_count', 'tacit_tx_count', 'tacit_block_index'])
+      new Set(['v', 'genesis', 'from', 'to', 'blocks', 'tx', 'index'])
     )
     expect(decoded.v).toBe(1)
-    expect(decoded.genesis_height).toBe(GENESIS)
+    expect(decoded.genesis).toBe(GENESIS)
     expect(decoded.from).toBe(GENESIS)
     expect(decoded.to).toBe(GENESIS + BLOCK_COUNT - 1)
-    expect(decoded.tacit_block_count).toBe(VALID_COUNT)
+    expect(decoded.blocks).toBe(VALID_COUNT)
   })
 })

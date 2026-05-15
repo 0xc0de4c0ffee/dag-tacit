@@ -41,14 +41,14 @@ describe('range root, block index, and CAR', () => {
     const idx = buildBlockIndex(new Map([[0, a!.blockCid]]))
     const root = buildRangeRoot({ genesisHeight: 948242, fromHeight: 100, toHeight: 200, tacitBlockCount: 5, tacitTxCount: 12, blockIndexCid: idx.cid })
     const decoded = dagCbor.decode(root.bytes) as Record<string, unknown>
-    expect(new Set(Object.keys(decoded))).toEqual(new Set(['v', 'genesis_height', 'from', 'to', 'tacit_block_count', 'tacit_tx_count', 'tacit_block_index']))
+    expect(new Set(Object.keys(decoded))).toEqual(new Set(['v', 'genesis', 'from', 'to', 'blocks', 'tx', 'index']))
     expect(decoded.v).toBe(1)
-    expect(decoded.genesis_height).toBe(948242)
+    expect(decoded.genesis).toBe(948242)
     expect(decoded.from).toBe(100)
     expect(decoded.to).toBe(200)
-    expect(decoded.tacit_block_count).toBe(5)
-    expect(decoded.tacit_tx_count).toBe(12)
-    expect(decoded.tacit_block_index).toBeInstanceOf(CID)
+    expect(decoded.blocks).toBe(5)
+    expect(decoded.tx).toBe(12)
+    expect(decoded.index).toBeInstanceOf(CID)
   })
 
   test('builds non-empty CAR bytes from processed blocks', () => {
@@ -70,14 +70,14 @@ describe('range root, block index, and CAR', () => {
     const decoded = dagCbor.decode(rootBlock!.bytes) as Record<string, unknown>
     const blockEntry = a!.cids.get('block')!
     expect('node' in blockEntry).toBe(true)
-    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['bitcoin_block', 'block_hash', 'prev', 'tacit_block', 'tacit_tx_count', 'time', 'tx_count', 'txs', 'v'])
-    expect(new Set(Object.keys(decoded))).toEqual(new Set(['bitcoin_block', 'block_hash', 'prev', 'tacit_block', 'tacit_tx_count', 'time', 'tx_count', 'txs', 'v']))
-    expect(decoded.tacit_block).toBe(4)
-    expect((decoded.prev as CID).toString()).toBe(prev!.blockCid.toString())
-    expect(decoded.bitcoin_block).toBe(10)
-    expect(decoded.block_hash).toBeInstanceOf(CID)
+    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v'])
+    expect(new Set(Object.keys(decoded))).toEqual(new Set(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v']))
+    expect(decoded.block).toBe(4)
+    expect((decoded.parent as CID).toString()).toBe(prev!.blockCid.toString())
+    expect(decoded.height).toBe(10)
+    expect(decoded.hash).toBeInstanceOf(CID)
     expect(decoded.txs).toBeDefined()
-    expect(decoded.tacit_block_index).toBeUndefined()
+    expect(decoded.index).toBeUndefined()
   })
 
   test('CAR root, block index, and rebased block nodes satisfy Sections 11 and 12', async () => {
@@ -91,13 +91,13 @@ describe('range root, block index, and CAR', () => {
     const rootBlock = await reader.get(roots[0])
     expect(rootBlock).toBeDefined()
     const root = dagCbor.decode(rootBlock!.bytes) as Record<string, unknown>
-    expect(root.genesis_height).toBe(948242) // TACIT_GENESIS_HEIGHT constant in car.ts
+    expect(root.genesis).toBe(948242)
     expect(root.from).toBe(10)
     expect(root.to).toBe(11)
-    expect(root.tacit_block_count).toBe(2)
-    expect(root.tacit_tx_count).toBe(2)
+    expect(root.blocks).toBe(2)
+    expect(root.tx).toBe(2)
 
-    const indexBlock = await reader.get(root.tacit_block_index as CID)
+    const indexBlock = await reader.get(root.index as CID)
     expect(indexBlock).toBeDefined()
     const index = dagCbor.decode(indexBlock!.bytes) as Record<string, CID>
     expect(Object.keys(index)).toEqual(['0', '1'])
@@ -108,9 +108,9 @@ describe('range root, block index, and CAR', () => {
     const secondBlockEntry = await reader.get(index['1'])
     expect(secondBlockEntry).toBeDefined()
     const secondBlock = dagCbor.decode(secondBlockEntry!.bytes) as Record<string, unknown>
-    expect(firstBlock.tacit_block).toBe(0)
-    expect(firstBlock.prev).toBeNull()
-    expect(secondBlock.tacit_block).toBe(1)
-    expect((secondBlock.prev as CID).toString()).toBe(index['0'].toString())
+    expect(firstBlock.block).toBe(0)
+    expect(firstBlock.parent).toBeNull()
+    expect(secondBlock.block).toBe(1)
+    expect((secondBlock.parent as CID).toString()).toBe(index['0'].toString())
   })
 })

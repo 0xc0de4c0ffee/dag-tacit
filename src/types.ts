@@ -108,20 +108,20 @@ export interface VinEntry {
   vout: number
   sequence: number
   witness: Link
-  script_sig: Uint8Array
+  sig: Uint8Array
   value: number
-  prevout_script_pubkey: Uint8Array
+  prevout: Uint8Array
 }
 
 /** VoutEntry per SPEC Section 8 */
 export interface VoutEntry {
   value: number
-  script_pub_key: Uint8Array
+  pubkey: Uint8Array
 }
 
 /** Tx per SPEC Section 6 */
 export interface Tx {
-  tx_index: number
+  index: number
   txid: RawHash
   fee: number
   version: number
@@ -132,13 +132,12 @@ export interface Tx {
 
 /** Block per SPEC Section 5 */
 export interface Block {
-  bitcoin_block: number
-  block_hash: RawHash
-  prev: Link | null
-  tacit_block: number
-  tacit_tx_count: number
+  height: number
+  hash: RawHash
+  parent: Link | null
+  block: number
+  tx: number
   time: number
-  tx_count: number
   txs: Link
   v: number
 }
@@ -149,16 +148,16 @@ export interface Block {
 
 export interface RangeRoot {
   v: number
-  genesis_height: number
+  genesis: number
   from: number
   to: number
-  tacit_block_count: number
-  tacit_tx_count: number
-  tacit_block_index: Link
+  blocks: number
+  tx: number
+  index: Link
 }
 
 export interface BlockIndex {
-  [tacitBlock: string]: Link
+  [key: string]: Link
 }
 
 // ============================================================================
@@ -202,6 +201,7 @@ export interface DagTacitConfig {
   bitcoinRpcUrl: string
   bitcoinNetwork: string
   startHeight: number
+  reorgDepth: number
   ipfsApiUrl: string
   ipfsGatewayUrl: string
 }

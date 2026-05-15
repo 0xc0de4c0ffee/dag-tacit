@@ -18,7 +18,7 @@ interface RangeRootResult {
 }
 
 /**
- * Build the tacit block CID index (SPEC Section 12)
+ * Build the block index (SPEC Section 12)
  */
 export function buildBlockIndex(blockIndex: Map<number, CID>): BlockIndexResult {
   const node: BlockIndex = {}
@@ -49,12 +49,12 @@ export function buildRangeRoot({
 }): RangeRootResult {
   const node: RangeRoot = {
     v: SCHEMA_VERSION,
-    genesis_height: genesisHeight,
+    genesis: genesisHeight,
     from: fromHeight,
     to: toHeight,
-    tacit_block_count: tacitBlockCount,
-    tacit_tx_count: tacitTxCount,
-    tacit_block_index: link(blockIndexCid)
+    blocks: tacitBlockCount,
+    tx: tacitTxCount,
+    index: link(blockIndexCid)
   }
   const encoded = encodeNode(node)
   return { cid: encoded.cid, bytes: encoded.bytes, node }
@@ -157,8 +157,8 @@ export function buildCarFile(processedBlocks: ProcessedBlock[]): Uint8Array {
     const original = blockEntry.node as Block
     const node: Block = {
       ...original,
-      tacit_block: i,
-      prev: prevBlockCid ? link(prevBlockCid) : null
+      block: i,
+      parent: prevBlockCid ? link(prevBlockCid) : null
     }
     const { cid, bytes } = encodeNode(node)
     rebasedBlocks.push({ ...processedBlocks[i], blockCid: cid, blockBytes: bytes, blockNode: node })
@@ -174,8 +174,8 @@ export function buildCarFile(processedBlocks: ProcessedBlock[]): Uint8Array {
   for (let i = 0; i < rebasedBlocks.length; i++) {
     const { blockCid, blockNode } = rebasedBlocks[i]
     blockIndex.set(i, blockCid)
-    tacitTxCount += blockNode.tacit_tx_count
-    const height = blockNode.bitcoin_block
+    tacitTxCount += blockNode.tx
+    const height = blockNode.height
     fromHeight = Math.min(fromHeight, height)
     toHeight = Math.max(toHeight, height)
   }

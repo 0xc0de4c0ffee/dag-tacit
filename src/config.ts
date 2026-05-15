@@ -8,6 +8,7 @@ export function loadConfig(): DagTacitConfig {
     bitcoinRpcUrl: process.env.BITCOIN_RPC_URL || '',
     bitcoinNetwork: process.env.BITCOIN_NETWORK || 'mainnet',
     startHeight: Number(process.env.START_HEIGHT || '948242'),
+    reorgDepth: Number(process.env.REORG_DEPTH || '6'),
     ipfsApiUrl: process.env.IPFS_API_URL || DEFAULT_IPFS_API,
     ipfsGatewayUrl: process.env.IPFS_GATEWAY_URL || DEFAULT_IPFS_GATEWAY,
   }

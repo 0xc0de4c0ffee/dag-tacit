@@ -53,14 +53,14 @@ const dryRun = flags.has('--dry-run')
 
 function usage(): never {
   console.error(`Usage:
-  bun run ipfs:import -- --block <height>
-  bun run ipfs:import -- -b <height>
-  bun run ipfs:import -- --range <start> <end>
-  bun run ipfs:import -- -r <start>-<end>
-  bun run ipfs:import -- --day <YYYY-MM-DD>
-  bun run ipfs:import -- -d <YYYY-MM-DD>
-  bun run ipfs:import -- --from <btc-height> --to <btc-height>
-  bun run ipfs:import -- --file <path.car>
+  bun run import --block <height>
+  bun run import -b <height>
+  bun run import --range <start> <end>
+  bun run import -r <start>-<end>
+  bun run import --day <YYYY-MM-DD>
+  bun run import -d <YYYY-MM-DD>
+  bun run import --from <btc-height> --to <btc-height>
+  bun run import --file <path.car>
 
 Options:
   --api <url>          IPFS API URL, default ${DEFAULT_API}
@@ -69,7 +69,7 @@ Options:
   --dry-run            Resolve and inspect CAR without importing
   --from <height>      Start BTC height (inclusive). Defaults to last stored block, or genesis.
   --to <height>        End BTC height (inclusive). Defaults to current chain tip.`)
-  process.exit(1)
+  process.exit(0)
 }
 
 export function carPathForArgs(flags: Map<string, string | boolean>, positionals: string[], root = ROOT): string {
@@ -163,6 +163,9 @@ export async function resolveFiles(flags: Map<string, string | boolean>, positio
     let from = flags.has('--from') ? Number(flags.get('--from')) : null
     let to = flags.has('--to') ? Number(flags.get('--to')) : null
 
+    if (from !== null && !Number.isFinite(from)) throw new Error(`Invalid --from value: ${flags.get('--from')}`)
+    if (to !== null && !Number.isFinite(to)) throw new Error(`Invalid --to value: ${flags.get('--to')}`)
+
     if (from === null) {
       from = getLastStoredHeight(root) ?? GENESIS_HEIGHT
       console.log(`[resolve] --from not set; using stored/genesis: ${from}`)
@@ -185,24 +188,27 @@ export async function resolveFiles(flags: Map<string, string | boolean>, positio
   return [carPathForArgs(flags, positionals, root)]
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) try {
-  const files = await resolveFiles(flags, positionals)
-  for (const file of files) {
-    if (!existsSync(file)) throw new Error(`CAR file not found: ${file}`)
-    const roots = await readRoots(file)
-    console.log(`[car] ${file}`)
-    console.log(`[roots] ${roots.join(', ')}`)
-    for (const root of roots) {
-      console.log(`[dag-get] curl -X POST '${api}/api/v0/dag/get?arg=${root}'`)
-      console.log(`[gateway] ${gateway}/ipfs/${root}`)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  if (flags.has('--help') || flags.has('-h')) usage()
+  try {
+    const files = await resolveFiles(flags, positionals)
+    for (const file of files) {
+      if (!existsSync(file)) throw new Error(`CAR file not found: ${file}`)
+      const roots = await readRoots(file)
+      console.log(`[car] ${file}`)
+      console.log(`[roots] ${roots.join(', ')}`)
+      for (const root of roots) {
+        console.log(`[dag-get] curl -X POST '${api}/api/v0/dag/get?arg=${root}'`)
+        console.log(`[gateway] ${gateway}/ipfs/${root}`)
+      }
+      if (dryRun) continue
+      console.log(`[ipfs] importing via ${api} pinRoots=${pinRoots}`)
+      const output = await importCar(file)
+      if (output) console.log(output)
     }
-    if (dryRun) continue
-    console.log(`[ipfs] importing via ${api} pinRoots=${pinRoots}`)
-    const output = await importCar(file)
-    if (output) console.log(output)
+    console.log('[done] CAR imported')
+  } catch (e) {
+    console.error(`[error] ${(e as Error).message}`)
+    process.exit(1)
   }
-  console.log('[done] CAR imported')
-} catch (e) {
-  console.error(`[error] ${(e as Error).message}`)
-  process.exit(1)
 }

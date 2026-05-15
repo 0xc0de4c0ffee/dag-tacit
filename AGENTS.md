@@ -26,6 +26,7 @@ src/
   nodes.ts             — Block, Tx, VinEntry, VoutEntry builders
   car.ts               — CAR file creation, range roots, block index
   config.ts            — .env config loader
+  reorg.ts             — Reorg detection logic
   rpc.ts               — Bitcoin JSON-RPC client
 
 tests/
@@ -48,7 +49,7 @@ See `src/types.ts` for all interfaces:
 ## Schema Rules (CRITICAL)
 
 1. **`v` field**: Only on `Block` and `RangeRoot`. `Tx`, `VinEntry`, `VoutEntry` do NOT have `v`.
-2. **`block_hash` / `txid`**: Raw CID links (`0x55` raw multicodec, `0x00` identity multihash, 32 bytes).
+2. **`hash` / `txid`**: Raw CID links (`0x55` raw multicodec, `0x00` identity multihash, 32 bytes).
 3. **`witness`**: In `VinEntry`, `witness` is a CID link to a `WitnessList` array (NOT inline). Each array element is a CID to a DAG-CBOR block containing one witness item byte string.
 4. **`vin` / `vout` in Tx**: CID links to arrays of individual entry CIDs.
 5. All DAG-CBOR blocks use multicodec `0x71`, CIDv1, SHA-256 `0x12`.
@@ -77,6 +78,7 @@ See `src/types.ts` for all interfaces:
 1. Create `scripts/<name>.ts` with shebang `#!/usr/bin/env bun`
 2. Add entry to `package.json` scripts
 3. Export any testable functions
+4. Add `--help`/`-h` support with usage text
 
 ## Testing
 
@@ -92,7 +94,7 @@ After importing, verify gateway traversal:
 
 ```bash
 # Import a block
-bun run import -- --from 948242 --to 948242
+bun run import --from 948242 --to 948242
 
 # Verify paths
 curl http://localhost:8080/ipfs/<root>/txs/0/vin/0/witness
@@ -101,5 +103,5 @@ curl http://localhost:8080/ipfs/<root>/txs/0/vin/0/witness/0
 
 ## Troubleshooting
 
-- **"digest too large"**: Identity multihash >128 bytes rejected by Kubo. Only use `rawCid` for exactly 32-byte hashes (txid, block_hash). Never for witness items or variable-length data.
+- **"digest too large"**: Identity multihash >128 bytes rejected by Kubo. Only use `rawCid` for exactly 32-byte hashes (txid, hash). Never for witness items or variable-length data.
 - **Path not traversable**: Check that array fields (`witness`, `vin`, `vout`, `txs`) are CID links to array nodes, not inline arrays.

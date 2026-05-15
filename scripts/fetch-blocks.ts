@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs'
+import { writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { loadConfig } from '../src/config.ts'
@@ -10,12 +10,27 @@ import type { BitcoinBlock, BitcoinTx } from '../src/types.ts'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 const OUT_DIR = resolve(ROOT, 'out', 'tacit-blocks')
+const OUT_REL = 'out/tacit-blocks'
 mkdirSync(OUT_DIR, { recursive: true })
 
 const config = loadConfig()
 const START_HEIGHT = config.startHeight
 const argv = process.argv.slice(2)
 const force = argv.includes('--force')
+
+if (argv.includes('--help') || argv.includes('-h')) {
+  console.log(`Usage: bun run fetch [options]
+
+Fetch Bitcoin blocks via RPC, filter Tacit transactions, and store artifacts.
+
+Options:
+  --from <height>    Starting BTC block height (default: resume from index or genesis ${START_HEIGHT})
+  --to <height>      Ending BTC block height (default: chain tip)
+  --force            Re-fetch and overwrite existing blocks
+  -t, --threads N    Concurrency (default: 5)
+  --help, -h         Show this help`)
+  process.exit(0)
+}
 
 function flagValue(...names: string[]): string | null {
   for (let i = 0; i < argv.length; i++) {
@@ -142,20 +157,127 @@ async function fetchBlock(height: number): Promise<FetchedBlock | null> {
   }
 }
 
-const start = parseInt(positional[0] || '0')
+const fromFlag = flagValue('--from')
+const toFlag = flagValue('--to')
+const start = fromFlag ? parseInt(fromFlag) : (positional[0] ? parseInt(positional[0]) : 0)
 const tip = await rpc('getblockcount') as number
-const end = parseInt(positional[1] || String(tip))
+const end = toFlag ? parseInt(toFlag) : (positional[1] ? parseInt(positional[1]) : tip)
 
 let resume = start
 if (!start) {
-  const idxFile = resolve(OUT_DIR, 'index.json')
-  if (existsSync(idxFile)) {
-    const idx = JSON.parse(readFileSync(idxFile, 'utf8')) as { last_processed?: number }
+  const idxPath = resolve(OUT_DIR, 'index.json')
+  if (existsSync(idxPath)) {
+    const idx = JSON.parse(readFileSync(idxPath, 'utf8')) as { last_processed?: number }
     resume = (idx.last_processed ?? START_HEIGHT - 1) + 1
     console.log(`Resume from #${resume} (tip: #${tip}, last: #${idx.last_processed})`)
   } else {
     resume = START_HEIGHT
     console.log(`Starting from Tacit genesis height #${START_HEIGHT}`)
+  }
+}
+
+// Reorg check: verify tip hash, walk back only on mismatch (runs before early-exit)
+const idxFilePath = resolve(OUT_DIR, 'index.json')
+if (existsSync(idxFilePath)) {
+  const idx = JSON.parse(readFileSync(idxFilePath, 'utf8')) as IndexData
+  if (idx.blocks.length > 0) {
+    const reorgDepth = config.reorgDepth
+    const sorted = [...idx.blocks].sort((a, b) => a.height - b.height)
+    const lastBlock = sorted[sorted.length - 1]
+    const lastHeight = lastBlock.height
+    const checkFrom = Math.max(START_HEIGHT, lastHeight - reorgDepth + 1)
+    if (checkFrom <= lastHeight) {
+      const storedByHeight = new Map(sorted.map(b => [b.height, b]))
+      const tipHash = await rpc('getblockhash', [lastHeight]) as string
+
+      if (tipHash !== lastBlock.hash) {
+        console.log(`\n[reorg] tip #${lastHeight} (tacit ${lastBlock.tacit_block}) hash mismatch — walking back`)
+        let cutoff = lastHeight
+        for (let h = lastHeight - 1; h >= checkFrom; h--) {
+          const rpcHash = await rpc('getblockhash', [h]) as string
+          const stored = storedByHeight.get(h)
+          if (stored && stored.hash === rpcHash) {
+            cutoff = h + 1
+            break
+          }
+          cutoff = h
+        }
+        console.log(`[reorg] fork at #${cutoff - 1}, removing ${lastHeight - cutoff + 1} blocks from #${cutoff}`)
+
+        const removed = idx.blocks.filter(b => b.height >= cutoff)
+
+        // Clean tacit-blocks
+        for (const rb of removed) {
+          const fp = resolve(OUT_DIR, rb.file)
+          if (existsSync(fp)) rmSync(fp)
+        }
+
+        // Clean dag-nodes
+        const dagIdxPath = resolve(ROOT, 'out', 'dag-nodes', 'index.json')
+        if (existsSync(dagIdxPath)) {
+          const dagIdx = JSON.parse(readFileSync(dagIdxPath, 'utf8')) as { blocks: { height: number; file: string }[] }
+          const dagRemoved = dagIdx.blocks.filter(b => b.height >= cutoff)
+          for (const dr of dagRemoved) {
+            const fp = resolve(ROOT, 'out', 'dag-nodes', dr.file)
+            if (existsSync(fp)) rmSync(fp)
+          }
+          dagIdx.blocks = dagIdx.blocks.filter(b => b.height < cutoff)
+          writeFileSync(dagIdxPath, JSON.stringify(dagIdx, null, 2) + '\n')
+        }
+
+        // Clean car blocks (per-day index structure)
+        const carIdxPath = resolve(ROOT, 'out', 'car', 'blocks', 'index.json')
+        if (existsSync(carIdxPath)) {
+          const carIdx = JSON.parse(readFileSync(carIdxPath, 'utf8')) as { days?: Record<string, string>; cars?: { btc_from: number; file: string }[] }
+          if (carIdx.days) {
+            const remaining: Record<string, string> = {}
+            for (const [day, relPath] of Object.entries(carIdx.days)) {
+              const dayIdxPath = resolve(ROOT, 'out', 'car', 'blocks', relPath)
+              if (existsSync(dayIdxPath)) {
+                const dayIdx = JSON.parse(readFileSync(dayIdxPath, 'utf8')) as { cars: { height: number; file: string }[] }
+                const kept = dayIdx.cars.filter(c => c.height < cutoff)
+                const carRemoved = dayIdx.cars.filter(c => c.height >= cutoff)
+                for (const cr of carRemoved) {
+                  const fp = resolve(ROOT, 'out', 'car', 'blocks', day, cr.file)
+                  if (existsSync(fp)) rmSync(fp)
+                }
+                if (kept.length) {
+                  dayIdx.cars = kept
+                  writeFileSync(dayIdxPath, JSON.stringify(dayIdx, null, 2) + '\n')
+                  remaining[day] = relPath
+                } else {
+                  rmSync(dayIdxPath)
+                }
+              }
+            }
+            carIdx.days = remaining
+            writeFileSync(carIdxPath, JSON.stringify(carIdx, null, 2) + '\n')
+          } else if (carIdx.cars) {
+            const carRemoved = carIdx.cars.filter(c => c.btc_from >= cutoff)
+            for (const cr of carRemoved) {
+              const fp = resolve(ROOT, 'out', 'car', cr.file)
+              if (existsSync(fp)) rmSync(fp)
+            }
+            carIdx.cars = carIdx.cars.filter(c => c.btc_from < cutoff)
+            writeFileSync(carIdxPath, JSON.stringify(carIdx, null, 2) + '\n')
+          }
+        }
+
+        // Clean car range/daily indices
+        for (const sub of ['range', 'daily']) {
+          const subIdx = resolve(ROOT, 'out', 'car', sub, 'index.json')
+          if (existsSync(subIdx)) rmSync(subIdx)
+        }
+
+        idx.blocks = idx.blocks.filter(b => b.height < cutoff)
+        idx.last_processed = cutoff - 1
+        idx.total_blocks = idx.blocks.length
+        idx.total_envs = idx.blocks.reduce((s, b) => s + (b.tacit_count ?? 0), 0)
+        writeFileSync(idxFilePath, JSON.stringify(idx, null, 2) + '\n')
+        if (resume > cutoff) resume = cutoff
+        console.log(`[reorg] reset to #${cutoff}, removed ${removed.length} tacit blocks`)
+      }
+    }
   }
 }
 
@@ -165,7 +287,7 @@ if (resume > end) {
 }
 
 console.log(`\nFetching ${resume} → ${end} (${end - resume + 1} blocks, ${CONCURRENCY}x concurrency)\n`)
-console.log(`[init] network=${config.bitcoinNetwork} out=${OUT_DIR} force=${force}`)
+console.log(`[init] network=${config.bitcoinNetwork} out=${OUT_REL} force=${force}`)
 
 const heights = Array.from({ length: end - resume + 1 }, (_, i) => resume + i)
 let idx = 0, done = 0, last = resume - 1
@@ -279,6 +401,8 @@ function commitReady(): void {
   }
 }
 
+let fetchSkipped = 0
+
 await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
   while (true) {
     const i = idx++
@@ -287,7 +411,7 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
 
     if (!force && seen.has(h)) {
       done++
-      console.log(`[skip]  #${h} already indexed (${done}/${heights.length})`)
+      fetchSkipped++
       completed.set(h, { result: null })
       commitReady()
       continue
@@ -308,5 +432,6 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
 
 saveIndex(index, last)
 const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+if (fetchSkipped) console.log(`[skip]  ${fetchSkipped} blocks already indexed`)
 console.log(`\nDone: ${index.total_blocks} blocks, ${index.total_envs} envs, ${elapsed}s`)
-console.log(`Output: ${OUT_DIR}`)
+console.log(`Output: ${OUT_REL}`)

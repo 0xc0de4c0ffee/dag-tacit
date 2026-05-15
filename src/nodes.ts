@@ -19,9 +19,9 @@ export function buildVinEntry(vin: BitcoinVin, witnessArrayCid: CID): VinEntry {
     vout: vin.vout || 0,
     sequence: vin.sequence || 0,
     witness: link(witnessArrayCid),
-    script_sig: vin.scriptSig?.hex ? hexToBytes(vin.scriptSig.hex) : new Uint8Array(0),
+    sig: vin.scriptSig?.hex ? hexToBytes(vin.scriptSig.hex) : new Uint8Array(0),
     value: prevoutValue,
-    prevout_script_pubkey: prevoutScript
+    prevout: prevoutScript
   }
 }
 
@@ -31,7 +31,7 @@ export function buildVinEntry(vin: BitcoinVin, witnessArrayCid: CID): VinEntry {
 export function buildVoutEntry(vout: BitcoinVout): VoutEntry {
   return {
     value: btcToSatoshis(vout.value || 0),
-    script_pub_key: vout.scriptPubKey?.hex ? hexToBytes(vout.scriptPubKey.hex) : new Uint8Array(0)
+    pubkey: vout.scriptPubKey?.hex ? hexToBytes(vout.scriptPubKey.hex) : new Uint8Array(0)
   }
 }
 
@@ -40,7 +40,7 @@ export function buildVoutEntry(vout: BitcoinVout): VoutEntry {
  */
 export function buildTxNode(tx: { txid: string; fee?: number; version?: number; locktime?: number }, txIndex: number, vinArrayCid: CID, voutArrayCid: CID): Tx {
   return {
-    tx_index: txIndex,
+    index: txIndex,
     txid: rawCid(hexToBytes(tx.txid)),
     fee: btcToSatoshis(tx.fee || 0),
     version: tx.version || 0,
@@ -55,13 +55,12 @@ export function buildTxNode(tx: { txid: string; fee?: number; version?: number; 
  */
 export function buildBlockNode(block: BitcoinBlock, tacitBlockIndex: number, prevCid: CID | null, txsCid: CID, tacitTxCount: number): Block {
   return {
-    bitcoin_block: block.height,
-    block_hash: rawCid(hexToBytes(block.hash)),
-    prev: prevCid ? link(prevCid) : null,
-    tacit_block: tacitBlockIndex,
-    tacit_tx_count: tacitTxCount,
+    height: block.height,
+    hash: rawCid(hexToBytes(block.hash)),
+    parent: prevCid ? link(prevCid) : null,
+    block: tacitBlockIndex,
+    tx: tacitTxCount,
     time: block.time,
-    tx_count: block.nTx,
     txs: link(txsCid),
     v: SCHEMA_VERSION
   }

@@ -21,12 +21,20 @@ jobs:
 
       - run: bun run build
 
-      - name: Create GitHub Release
+      - name: Create Draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             dist/index.js
             dist/index.js.map
+            dist/index.d.ts
+            dist/*.d.ts
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

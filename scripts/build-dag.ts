@@ -11,20 +11,48 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 const RAW_DIR = resolve(ROOT, 'out', 'tacit-blocks')
 const DAG_DIR = resolve(ROOT, 'out', 'dag-nodes')
+const DAG_REL = 'out/dag-nodes'
 mkdirSync(DAG_DIR, { recursive: true })
 
 const argv = process.argv.slice(2)
 const force = argv.includes('--force')
+
+function flagValue(...names: string[]): string | null {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    for (const name of names) {
+      if (arg === name) return argv[i + 1]
+      if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1)
+    }
+  }
+  return null
+}
+
+if (argv.includes('--help') || argv.includes('-h')) {
+  console.log(`Usage: bun run dag [options]
+
+Build DAG-CBOR nodes from fetched Tacit block artifacts.
+
+Options:
+  --from <height>    Starting BTC block height (default: all)
+  --to <height>      Ending BTC block height (default: all)
+  --force            Rebuild and overwrite existing DAG nodes
+  --help, -h         Show this help`)
+  process.exit(0)
+}
+
 const positional = argv.filter((a, i) => !a.startsWith('-') && !['-t', '--thread', '--threads'].includes(argv[i - 1]))
-const start = positional[0] ? parseInt(positional[0]) : null
-const end = positional[1] ? parseInt(positional[1]) : null
+const fromFlag = flagValue('--from')
+const toFlag = flagValue('--to')
+const start = fromFlag ? parseInt(fromFlag) : (positional[0] ? parseInt(positional[0]) : null)
+const end = toFlag ? parseInt(toFlag) : (positional[1] ? parseInt(positional[1]) : null)
 
 if (!existsSync(RAW_DIR)) {
-  console.error('No tacit block artifacts found. Run: bun run fetch [start] [end]')
+  console.error('No tacit block artifacts found. Run: bun run fetch')
   process.exit(1)
 }
 if (!existsSync(resolve(RAW_DIR, 'index.json'))) {
-  console.error('No tacit block index found. Run: bun run fetch [start] [end]')
+  console.error('No tacit block index found. Run: bun run fetch')
   process.exit(1)
 }
 
@@ -41,7 +69,7 @@ function jsonNode(value: unknown): unknown {
 }
 
 console.log('Building DAG-CBOR nodes from Tacit block artifacts...\n')
-console.log(`[init] out=${DAG_DIR} force=${force}`)
+console.log(`[init] out=${DAG_REL} force=${force}`)
 
 const t0 = Date.now()
 
@@ -100,6 +128,8 @@ if (!force && existsSync(resolve(DAG_DIR, 'index.json'))) {
   }
 }
 
+let skipped = 0
+
 for (const blockInfo of sortedBlocks) {
   const blockPath = resolve(RAW_DIR, blockInfo.file)
   const day = blockInfo.day || new Date(blockInfo.time * 1000).toISOString().slice(0, 10)
@@ -116,7 +146,7 @@ for (const blockInfo of sortedBlocks) {
       tacitBlockIndex = Math.max(tacitBlockIndex, existingBlock.tacit_block + 1)
       prevBlockCid = existingBlock.cid ? CID.parse(existingBlock.cid) : prevBlockCid
     }
-    console.log(`[skip]  #${blockInfo.height} already built`)
+    skipped++
     continue
   }
 
@@ -227,7 +257,9 @@ for (const blockInfo of sortedBlocks) {
   console.log(`  #${blockInfo.height} → ${blockCid.toString().slice(0, 20)}... (${result.tacitTxCount} txs, ${elapsed}s)`)
 }
 
+dagIndex.blocks.sort((a, b) => a.tacit_block - b.tacit_block)
 writeFileSync(resolve(DAG_DIR, 'index.json'), JSON.stringify(dagIndex, null, 2) + '\n')
 
+if (skipped) console.log(`[skip]  ${skipped} blocks already built`)
 console.log(`\nDone: ${dagIndex.total_blocks} DAG blocks, ${dagIndex.total_envs} envelopes`)
-console.log(`Output: ${DAG_DIR}`)
+console.log(`Output: ${DAG_REL}`)
