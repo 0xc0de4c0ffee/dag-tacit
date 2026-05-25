@@ -2,20 +2,28 @@
 
 DAG-Tacit defines a deterministic IPLD representation of Tacit-bearing Bitcoin transactions.
 
-Schemas are grouped by serialized IPLD blocks. Except for the types listed in “Basic Types”, the top-level schema type in each schema block represents a value that is serialized as a single DAG-CBOR block with its own CID.
+Schemas are grouped by serialized IPLD blocks. Except for the types listed in "Basic Types", the top-level schema type in each schema block represents a value that is serialized as a single DAG-CBOR block with its own CID.
 
 ## Abstract
 
 This document specifies:
 
 - **Tacit transaction inclusion**: how Bitcoin transactions are selected for the index.
-- **DAG-CBOR block types**: `Block`, `Tx`, `VinEntry`, `VoutEntry`, range root, and block index.
+- **DAG-CBOR block types**: `Block`, `Tx`, `VinEntry`, `VoutEntry`, RangeRoot, BlockIndex, `Asset`, `AssetOp`, `AssetIndex`.
 - **Bitcoin Core JSON mapping**: how RPC fields are converted into normalized DAG fields.
 - **Deterministic encoding rules**: constraints required for reproducible CIDs.
 
-The Tacit protocol itself, including envelope layout, opcodes, payloads, and balance rules, is defined by the upstream Tacit specification. Per-opcode wire formats are documented in the [opcode index](./opcodes/index.md) with [individual files](./opcodes/0x21-cetch.md) for each opcode.
+The Tacit protocol itself, including envelope layout, opcodes, payloads, and balance rules, is defined by the upstream Tacit specification. Per-opcode wire formats are documented in the [opcode index](./opcodes/index.md) with [individual files](./opcodes/0x21-cetch.md) for each opcode. The complete opcode constant table is maintained in [`src/config.ts`](./src/config.ts) as `OPCODES_INFO`.
 
-Packaging and transport formats, including CAR files, IPFS import flows, RPC capture, and local build pipelines, are out of scope. Such layers MAY wrap these IPLD values, but MUST NOT alter the normative field sets or encoding rules defined here.
+**Implementation pipeline.** The dag-tacit system processes Tacit-bearing Bitcoin blocks in three stages:
+
+1. **Fetch** ([`scripts/blocks/blocks-fetch.ts`](./scripts/blocks/blocks-fetch.ts)): Fetches blocks via Bitcoin RPC, filters by Tacit magic bytes (`5441434954`) and envelope structure (push5 magic + push1 version). Stores only filtered transactions with block metadata. No opcode validation at this layer.
+
+2. **DAG** ([`scripts/blocks/blocks-dag.ts`](./scripts/blocks/blocks-dag.ts), [`src/blocks/blocks-nodes.ts`](./src/blocks/blocks-nodes.ts)): Reads filtered artifacts, validates envelope structure (magic + version + pushdata framing). Builds DAG-CBOR nodes. No opcode validation at this layer.
+
+3. **Assets** ([`scripts/assets/`](./scripts/assets/), [`src/assets/`](./src/assets/)): Full opcode validation and payload parsing. Extracts asset definitions (CETCH), tracks operations, builds asset index. This is the only layer that validates opcodes.
+
+Packaging and transport formats, including CAR files, IPFS import flows, RPC capture, and local build pipelines, are out of scope for the IPLD schema. Such layers MAY wrap these IPLD values, but MUST NOT alter the normative field sets or encoding rules defined here.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described in BCP 14 [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) when, and only when, they appear in capitals in this document.
 
@@ -24,6 +32,8 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 | ID | Reference |
 |----|-----------|
 | TACIT-SPEC | [Tacit protocol specification](https://github.com/z0r0z/tacit/blob/main/SPEC.md) |
+| OPCODES | [Per-opcode wire format files](./opcodes/index.md) — 30 shipped + 6 drafted opcodes |
+| CONFIG | [`src/config.ts`](./src/config.ts) — `OPCODES_INFO` with all opcode constants |
 | IPLD-DAG-CBOR | [DAG-CBOR](https://ipld.io/docs/codecs/known/dag-cbor/) |
 | IPLD-SCHEMA | [IPLD Schema](https://ipld.io/docs/schemas/) |
 
@@ -66,13 +76,18 @@ The block index is a string-keyed map to CIDs and does not carry `v`.
 
 A Bitcoin transaction MUST be included in `Block.txs` if and only if all of the following checks succeed:
 
-| Step | Requirement |
-|------|-------------|
-| 1 | `vin[0]` has a second witness item available as raw bytes (`txinwitness[1]` or `witness[1]`). |
-| 2 | Tacit envelope decoding succeeds for that witness item according to TACIT-SPEC. |
-| 3 | Tacit payload decoding succeeds for the parsed opcode and payload according to TACIT-SPEC. |
+| Step | Requirement | Layer |
+|------|-------------|-------|
+| 1 | `vin[0]` has a second witness item available as raw bytes (`txinwitness[1]` or `witness[1]`). | Fetch |
+| 2 | Tacit envelope decode succeeds for that witness item: `OP_0 OP_IF <magic=5B> <version=1B> <payload> OP_ENDIF`. Magic bytes MUST be `TACIT` (`0x5441434954`). Version MUST be `0x01`. | Fetch / DAG |
+| 3 | Tacit payload opcode is recognized (opcode byte exists in `OPCODES_INFO`). | Assets |
 
 Implementations MUST NOT include a transaction when any check fails.
+
+**Layered validation.** The dag-tacit system splits these checks across three stages:
+- **Fetch** (`scripts/blocks/blocks-fetch.ts`): Fast hex-string scan for magic bytes, then full envelope structure validation via `extractEnvelopeContent()`. Stores filtered transaction data.
+- **DAG** (`scripts/blocks/blocks-dag.ts`): Re-validates envelope structure via `extractEnvelopeContent()` before building DAG-CBOR nodes. No opcode validation.
+- **Assets** (`src/assets/assets-parse.ts`): Full validation via `extractTacitPayload()` which adds opcode recognition and payload parsing.
 
 Implementation note: an indexer MAY prefilter candidates before envelope decoding. For example, when using Bitcoin Core verbose block JSON `getblock(hash, 2)`, an implementation can inspect only `vin[0].txinwitness[1]` and search for the Tacit magic bytes `TACIT` (`5441434954`). This prefilter is non-normative and MUST NOT be treated as proof of inclusion. Every candidate still MUST pass envelope and payload decoding.
 
@@ -352,7 +367,7 @@ If the field is missing or non-finite, the stored value MUST be `0`.
 
 To maximize reproducibility of CIDs:
 
-1. `Block`, `Tx`, `VinEntry`, `VoutEntry`, and range root objects MUST use exactly the field names listed in this document.
+1. `Block`, `Tx`, `VinEntry`, `VoutEntry`, `RangeRoot`, `Asset`, `AssetOp`, and `AssetIndex` objects MUST use exactly the field names listed in this document.
 2. Encoders MUST NOT omit keys for those objects.
 3. Encoders MUST NOT add fields that are not listed in this document.
 4. The block index MUST contain only keys specified by the `BlockIndex` invariants.
@@ -364,7 +379,7 @@ If prevout or other fields are later populated from additional sources, the resu
 
 ## Examples
 
-This section is non-normative. It shows representative decoded `Block` JSON views and CIDs from one generated DAG-Tacit output set. Byte strings are rendered as lowercase hexadecimal strings, and CIDs are rendered in base32 text form.
+This section is non-normative. It shows representative decoded `Block` JSON views and CIDs from one generated DAG-Tacit output set. Byte strings are rendered as lowercase hexadecimal strings, and CIDs are rendered in base32 text form. Actual CIDs vary based on the specific block data and pipeline version.
 
 ### Block 0
 
@@ -439,7 +454,8 @@ This index is a cache of public chain data. Implementations MUST NOT treat it as
 The build pipeline MAY emit **debug metadata** for transactions that pass the Tacit magic-bytes check (`0x5441434954` in `vin[0].witness[1]`) but fail deeper validation (malformed envelope frame, bad version, unknown opcode, payload decode error). This metadata is **NOT** part of the IPLD DAG-CBOR schema and MUST NOT be included in CAR files or the block index.
 
 - **Purpose**: Chain security monitoring, fork detection, protocol debugging.
-- **Format**: JSON files and append-only logs, outside the IPLD namespace.
+- **Format**: Per-block JSON files (`out/debug/<height>-debug.json`) and append-only log (`out/debug/debug.log`).
 - **Fields**: `txid` (string), `error` (string), `witness_hex` (string).
+- **Stages**: Envelope failures (bad magic/version) are caught at fetch stage; opcode failures are caught at assets stage.
 
 Debug metadata is implementation-specific and MAY be collected by indexers separately for further analysis and future upgrades.
