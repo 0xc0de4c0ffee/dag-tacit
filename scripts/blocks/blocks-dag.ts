@@ -4,29 +4,25 @@ import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { CID } from 'multiformats/cid'
 import * as dagCbor from '@ipld/dag-cbor'
-import { processBlock } from '../src/nodes.ts'
-import type { ProcessedBlock, BitcoinBlock } from '../src/types.ts'
+import { processBlock } from '../../src/blocks/blocks-nodes.ts'
+import { bytesToHex } from '../../src/lib/dag-cbor.ts'
+import { jsonNode, utcDay } from '../../src/lib/utils.ts'
+import { flagValue } from '../utils.ts'
+import type { ProcessedBlock, BitcoinBlock } from '../../src/types.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const ROOT = resolve(__dirname, '..')
+const ROOT = resolve(__dirname, '../..')
 const RAW_DIR = resolve(ROOT, 'out', 'tacit-blocks')
 const DAG_DIR = resolve(ROOT, 'out', 'dag-nodes')
+const DEBUG_DIR = resolve(ROOT, 'out', 'debug')
 const DAG_REL = 'out/dag-nodes'
+const DEBUG_REL = 'out/debug'
 mkdirSync(DAG_DIR, { recursive: true })
+mkdirSync(DEBUG_DIR, { recursive: true })
 
 const argv = process.argv.slice(2)
 const force = argv.includes('--force')
 
-function flagValue(...names: string[]): string | null {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    for (const name of names) {
-      if (arg === name) return argv[i + 1]
-      if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1)
-    }
-  }
-  return null
-}
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: bun run dag [options]
@@ -42,8 +38,8 @@ Options:
 }
 
 const positional = argv.filter((a, i) => !a.startsWith('-') && !['-t', '--thread', '--threads'].includes(argv[i - 1]))
-const fromFlag = flagValue('--from')
-const toFlag = flagValue('--to')
+const fromFlag = flagValue(argv, '--from')
+const toFlag = flagValue(argv, '--to')
 const start = fromFlag ? parseInt(fromFlag) : (positional[0] ? parseInt(positional[0]) : null)
 const end = toFlag ? parseInt(toFlag) : (positional[1] ? parseInt(positional[1]) : null)
 
@@ -56,17 +52,6 @@ if (!existsSync(resolve(RAW_DIR, 'index.json'))) {
   process.exit(1)
 }
 
-function jsonNode(value: unknown): unknown {
-  if (value instanceof Uint8Array) return Buffer.from(value).toString('hex')
-  if (value instanceof CID) return value.toString()
-  if (Array.isArray(value)) return value.map(jsonNode)
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value)) out[k] = jsonNode(v)
-    return out
-  }
-  return value
-}
 
 console.log('Building DAG-CBOR nodes from Tacit block artifacts...\n')
 console.log(`[init] out=${DAG_REL} force=${force}`)
@@ -74,7 +59,7 @@ console.log(`[init] out=${DAG_REL} force=${force}`)
 const t0 = Date.now()
 
 interface RawBlockIndex {
-  blocks: { height: number; hash: string; time: number; file: string; day?: string }[]
+  blocks: { height: number; hash: string; time: number; file: string }[]
   range?: [number, number]
 }
 
@@ -87,7 +72,6 @@ interface DagIndexBlock {
   height: number
   hash: string
   time: number
-  day: string
   tacit_block: number
   cid: string
   tacit_tx_count: number
@@ -96,22 +80,22 @@ interface DagIndexBlock {
 
 interface DagIndex {
   version: number
-  created: string
   blocks: DagIndexBlock[]
   range?: [number, number]
   total_blocks: number
   total_envs: number
+  total_debug: number
 }
 
 let tacitBlockIndex = 0
 let prevBlockCid: CID | null = null
 const dagIndex: DagIndex = {
   version: 1,
-  created: new Date().toISOString(),
   blocks: [],
   range: rawIndex.range,
   total_blocks: 0,
-  total_envs: 0
+  total_envs: 0,
+  total_debug: 0
 }
 const existingByHeight = new Map<number, DagIndexBlock>()
 
@@ -121,6 +105,7 @@ if (!force && existsSync(resolve(DAG_DIR, 'index.json'))) {
   dagIndex.blocks = existing.blocks.filter(b => !sortedBlocks.some(x => x.height === b.height))
   dagIndex.total_blocks = dagIndex.blocks.length
   dagIndex.total_envs = dagIndex.blocks.reduce((s, b) => s + (b.tacit_tx_count ?? 0), 0)
+  dagIndex.total_debug = existing.total_debug ?? 0
   tacitBlockIndex = dagIndex.blocks.length
   if (dagIndex.blocks.length) {
     const lastExisting = [...dagIndex.blocks].sort((a, b) => a.tacit_block - b.tacit_block).at(-1)
@@ -132,7 +117,7 @@ let skipped = 0
 
 for (const blockInfo of sortedBlocks) {
   const blockPath = resolve(RAW_DIR, blockInfo.file)
-  const day = blockInfo.day || new Date(blockInfo.time * 1000).toISOString().slice(0, 10)
+  const day = utcDay(blockInfo.time)
   const dagSubdir = resolve(DAG_DIR, day)
   const dagFileName = `dag-tacit-${tacitBlockIndex}-${blockInfo.height}.json`
   const dagFile = resolve(dagSubdir, dagFileName)
@@ -155,7 +140,7 @@ for (const blockInfo of sortedBlocks) {
     continue
   }
 
-  const block = JSON.parse(readFileSync(blockPath, 'utf8')) as { tx?: unknown[]; txs?: unknown[]; tx_count?: number; nTx?: number }
+  const block = JSON.parse(readFileSync(blockPath, 'utf8')) as { height: number; hash: string; previousblockhash?: string | null; time: number; tx?: unknown[]; txs?: unknown[]; tx_count?: number; nTx?: number; debug_txs?: { txid: string; error: string; witness_hex: string }[] }
   if (!block.tx && block.txs) {
     (block as { tx: unknown[] }).tx = block.txs
     ;(block as { nTx: number }).nTx = block.tx_count ?? block.txs.length
@@ -194,13 +179,13 @@ for (const blockInfo of sortedBlocks) {
     nodes.push({
       key,
       cid: entry.cid.toString(),
-      bytes_hex: Buffer.from(entry.bytes).toString('hex'),
+      bytes_hex: bytesToHex(entry.bytes),
       role: key === 'block' ? 'block' : key === 'txs' ? 'txs' : key.startsWith('tx-') ? 'tx' : key.startsWith('vin-') ? 'vin' : key.startsWith('vout-') ? 'vout' : 'unknown',
       txid: key.includes('-') ? key.slice(key.indexOf('-') + 1) : null,
       node: 'node' in entry ? jsonNode(entry.node) : null
     })
     if (key === 'block') {
-      blockNode = dagCbor.decode(entry.bytes)
+      blockNode = jsonNode(dagCbor.decode(entry.bytes))
     }
   }
 
@@ -212,12 +197,12 @@ for (const blockInfo of sortedBlocks) {
     tacit_tx_count: result.tacitTxCount,
     block: {
       cid: blockCid.toString(),
-      bytes_hex: Buffer.from(cids.get('block')!.bytes).toString('hex'),
+      bytes_hex: bytesToHex(cids.get('block')!.bytes),
       node: blockNode
     },
     txs: {
       cid: cids.get('txs')!.cid.toString(),
-      bytes_hex: Buffer.from(cids.get('txs')!.bytes).toString('hex')
+      bytes_hex: bytesToHex(cids.get('txs')!.bytes)
     },
     nodes,
     transactions: [] as TxRef[]
@@ -236,11 +221,27 @@ for (const blockInfo of sortedBlocks) {
 
   writeFileSync(dagFile, JSON.stringify(nodeData, null, 2) + '\n')
 
+  // Write debug metadata for txs that passed magic but failed deeper validation
+  const debugTxs = block.debug_txs ?? []
+  if (debugTxs.length > 0) {
+    const debugFile = resolve(DEBUG_DIR, `${blockInfo.height}-debug.json`)
+    writeFileSync(debugFile, JSON.stringify({
+      hash: blockInfo.hash,
+      txs: debugTxs
+    }, null, 2) + '\n')
+    const logPath = resolve(DEBUG_DIR, 'debug.log')
+    const logLines = debugTxs.map(d =>
+      `${new Date().toISOString()} #${blockInfo.height} txid=${d.txid} error=${d.error} witness_hex=${d.witness_hex.slice(0, 40)}${d.witness_hex.length > 40 ? '...' : ''}`
+    ).join('\n') + '\n'
+    const existingLog = existsSync(logPath) ? readFileSync(logPath, 'utf8') : ''
+    writeFileSync(logPath, existingLog + logLines)
+    dagIndex.total_debug += debugTxs.length
+  }
+
   dagIndex.blocks.push({
     height: blockInfo.height,
     hash: blockInfo.hash,
     time: blockInfo.time,
-    day,
     tacit_block: tacitBlockIndex,
     cid: blockCid.toString(),
     tacit_tx_count: result.tacitTxCount,
@@ -253,13 +254,15 @@ for (const blockInfo of sortedBlocks) {
   prevBlockCid = blockCid
   tacitBlockIndex++
 
+  const totalTxs = (block as { nTx: number }).nTx
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
-  console.log(`  #${blockInfo.height} → ${blockCid.toString().slice(0, 20)}... (${result.tacitTxCount} txs, ${elapsed}s)`)
+  console.log(`  #${blockInfo.height} → ${blockCid.toString()} (${result.tacitTxCount} tacit / ${totalTxs} total txs, ${elapsed}s)`)
 }
 
 dagIndex.blocks.sort((a, b) => a.tacit_block - b.tacit_block)
 writeFileSync(resolve(DAG_DIR, 'index.json'), JSON.stringify(dagIndex, null, 2) + '\n')
 
 if (skipped) console.log(`[skip]  ${skipped} blocks already built`)
-console.log(`\nDone: ${dagIndex.total_blocks} DAG blocks, ${dagIndex.total_envs} envelopes`)
+console.log(`\nDone: ${dagIndex.total_blocks} DAG blocks, ${dagIndex.total_envs} envelopes, ${dagIndex.total_debug} debug txs`)
 console.log(`Output: ${DAG_REL}`)
+if (dagIndex.total_debug > 0) console.log(`Debug:  ${DEBUG_REL}`)

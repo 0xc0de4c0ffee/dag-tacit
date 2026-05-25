@@ -6,11 +6,11 @@ import * as dagCbor from '@ipld/dag-cbor'
 import { CID } from 'multiformats/cid'
 import { CarReader } from '@ipld/car'
 import { loadConfig } from '../src/config.ts'
-import { createBitcoinRpcClient, fetchVerboseBlock } from '../src/rpc.ts'
-import { extractTacitPayload, hasTacitEnvelope } from '../src/envelope.ts'
-import { processBlock, buildVinEntry, buildVoutEntry } from '../src/nodes.ts'
-import { buildBlockCarFile, buildCarFile, buildBlockIndex, buildRangeRoot } from '../src/car.ts'
-import { encodeNode, hexToBytes } from '../src/dag-cbor.ts'
+import { createBitcoinRpcClient, fetchVerboseBlock } from '../src/lib/rpc.ts'
+import { extractEnvelopeContent, extractTacitPayload, hasTacitEnvelope } from '../src/lib/envelope.ts'
+import { processBlock, buildVinEntry, buildVoutEntry } from '../src/blocks/blocks-nodes.ts'
+import { buildBlockCarFile, buildCarFile, buildBlockIndex, buildRangeRoot } from '../src/blocks/blocks-car.ts'
+import { encodeNode, hexToBytes } from '../src/lib/dag-cbor.ts'
 import type { BitcoinBlock, ProcessedBlock } from '../src/types.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -114,18 +114,21 @@ describe('envelope across 25 blocks', () => {
     const height = GENESIS + i
     const block = ALL_BLOCKS[i]
     test(`#${height} — detects tacit txs`, () => {
-      let found = 0
+      let count = 0
       for (const tx of block.tx) {
         const w = tx.vin?.[0]?.txinwitness
         if (!w || w.length < 2) continue
+        // Fast magic check (fetch-level)
         if (!hasTacitEnvelope(w)) continue
-        const r = extractTacitPayload(tx)
-        if (r.ok) {
-          found++
-          expect(r.opcode).toBeTruthy()
-        }
+        // Envelope structure check (dag-level)
+        const envelope = extractEnvelopeContent(tx)
+        if (!envelope.ok) continue
+        // Full opcode validation (assets-level)
+        const payload = extractTacitPayload(tx)
+        if (!payload.ok) continue
+        count++
+        expect(payload.opcode).toBeTruthy()
       }
-      // Each found tx must have a valid opcode (checked above)
     })
   }
 })
@@ -173,14 +176,15 @@ describe('nodes across 25 blocks', () => {
     const { cid: witnessArrayCid } = encodeNode(witnessCids)
     const node = buildVinEntry(vin, witnessArrayCid)
     expect(Object.keys(node)).toEqual(['txid', 'vout', 'sequence', 'witness', 'sig', 'value', 'prevout'])
-    expect(node.txid).toBeInstanceOf(CID)
+    expect(node.txid).toBeInstanceOf(Uint8Array)
     expect(node.witness).toBeInstanceOf(CID)
   })
 
   test('genesis block — buildVoutEntry on real vout', () => {
     const vout = ALL_BLOCKS[0].tx[0].vout[0]
     const node = buildVoutEntry(vout)
-    expect(Object.keys(node)).toEqual(['value', 'pubkey'])
+    expect(Object.keys(node)).toEqual(['pubkey', 'value'])
+    expect(node.pubkey).toBeInstanceOf(Uint8Array)
     expect(node.value).toBeGreaterThanOrEqual(0)
   })
 })

@@ -1,9 +1,8 @@
 import { CID } from 'multiformats/cid'
-import { encodeNode, link, hexToBytes, btcToSatoshis, rawCid } from './dag-cbor.ts'
-import { extractTacitPayload, hasTacitEnvelope } from './envelope.ts'
-import type { BitcoinBlock, BitcoinVin, BitcoinVout, VinEntry, VoutEntry, Tx, Block, ProcessedBlock, CidMap } from './types.ts'
-
-const SCHEMA_VERSION = 1
+import { encodeNode, link, hexToBytes, btcToSatoshis } from '../lib/dag-cbor.ts'
+import { extractEnvelopeContent, hasTacitEnvelope } from '../lib/envelope.ts'
+import { SCHEMA_VERSION } from '../config.ts'
+import type { BitcoinBlock, BitcoinVin, BitcoinVout, VinEntry, VoutEntry, Tx, Block, ProcessedBlock, CidMap } from '../types.ts'
 
 /**
  * Build a VinEntry node (SPEC Section 7)
@@ -15,7 +14,7 @@ export function buildVinEntry(vin: BitcoinVin, witnessArrayCid: CID): VinEntry {
     : new Uint8Array(0)
 
   return {
-    txid: vin.txid ? rawCid(hexToBytes(vin.txid)) : rawCid(new Uint8Array(32)),
+    txid: vin.txid ? hexToBytes(vin.txid) : new Uint8Array(32),
     vout: vin.vout || 0,
     sequence: vin.sequence || 0,
     witness: link(witnessArrayCid),
@@ -30,8 +29,8 @@ export function buildVinEntry(vin: BitcoinVin, witnessArrayCid: CID): VinEntry {
  */
 export function buildVoutEntry(vout: BitcoinVout): VoutEntry {
   return {
-    value: btcToSatoshis(vout.value || 0),
-    pubkey: vout.scriptPubKey?.hex ? hexToBytes(vout.scriptPubKey.hex) : new Uint8Array(0)
+    pubkey: hexToBytes(vout.scriptPubKey.hex || ''),
+    value: btcToSatoshis(vout.value || 0)
   }
 }
 
@@ -41,7 +40,7 @@ export function buildVoutEntry(vout: BitcoinVout): VoutEntry {
 export function buildTxNode(tx: { txid: string; fee?: number; version?: number; locktime?: number }, txIndex: number, vinArrayCid: CID, voutArrayCid: CID): Tx {
   return {
     index: txIndex,
-    txid: rawCid(hexToBytes(tx.txid)),
+    txid: hexToBytes(tx.txid),
     fee: btcToSatoshis(tx.fee || 0),
     version: tx.version || 0,
     locktime: tx.locktime || 0,
@@ -56,7 +55,7 @@ export function buildTxNode(tx: { txid: string; fee?: number; version?: number; 
 export function buildBlockNode(block: BitcoinBlock, tacitBlockIndex: number, prevCid: CID | null, txsCid: CID, tacitTxCount: number): Block {
   return {
     height: block.height,
-    hash: rawCid(hexToBytes(block.hash)),
+    hash: hexToBytes(block.hash),
     parent: prevCid ? link(prevCid) : null,
     block: tacitBlockIndex,
     tx: tacitTxCount,
@@ -75,9 +74,9 @@ export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevB
     const tx = block.tx[i]
     const w = tx.vin?.[0]?.txinwitness
     if (!w || !hasTacitEnvelope(w)) continue
-    const result = extractTacitPayload(tx)
-    if (result.ok) {
-      tacitTxs.push({ tx, txIndex: typeof tx.tx_index === 'number' ? tx.tx_index : i, payload: result.payload })
+    const envelope = extractEnvelopeContent(tx)
+    if (envelope.ok) {
+      tacitTxs.push({ tx, txIndex: typeof tx.tx_index === 'number' ? tx.tx_index : i, payload: envelope.payload })
     }
   }
 
@@ -127,20 +126,12 @@ export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevB
     cids.set(`tx-${tx.txid}`, { cid: txCid, bytes: txBytes, node: txNode })
     txCids.push(txCid)
 
-    // Store raw txid block
-    const txidBytes = hexToBytes(tx.txid)
-    const txidCid = rawCid(txidBytes)
-    cids.set(`txid-${tx.txid}`, { cid: txidCid, bytes: txidBytes })
   }
 
   // Build transactions array
   const { cid: txsCid, bytes: txsBytes } = encodeNode(txCids)
   cids.set('txs', { cid: txsCid, bytes: txsBytes })
 
-  // Store raw block_hash block
-  const blockHashBytes = hexToBytes(block.hash)
-  const blockHashCid = rawCid(blockHashBytes)
-  cids.set('block-hash', { cid: blockHashCid, bytes: blockHashBytes })
 
   // Build Block node
   const blockNode = buildBlockNode(block, tacitBlockIndex, prevBlockCid, txsCid, tacitTxs.length)

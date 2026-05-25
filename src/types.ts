@@ -51,13 +51,19 @@ export interface BitcoinTx {
   tx_index?: number
 }
 
+export interface DebugTx extends BitcoinTx {
+  error: string
+  witness_hex: string
+}
+
 export interface BitcoinBlock {
   height: number
   hash: string
   previousblockhash?: string | null
   time: number
-  nTx: number
+  nTx?: number
   tx: BitcoinTx[]
+  debugTxs?: DebugTx[]
 }
 
 // ============================================================================
@@ -96,15 +102,12 @@ export type DecodePayloadResult = DecodedPayloadResult | DecodedPayloadError
 /** CID link alias for schema readability */
 export type Link = CID
 
-/** Raw-hash CID: CIDv1, raw multicodec 0x55, identity multihash 0x00 */
-export type RawHash = CID
-
 /** Witness data CID: CIDv1, dag-cbor 0x71, SHA-256, contains a single byte string */
 export type WitnessData = CID
 
 /** VinEntry per SPEC Section 7 */
 export interface VinEntry {
-  txid: RawHash
+  txid: Uint8Array
   vout: number
   sequence: number
   witness: Link
@@ -115,14 +118,14 @@ export interface VinEntry {
 
 /** VoutEntry per SPEC Section 8 */
 export interface VoutEntry {
-  value: number
   pubkey: Uint8Array
+  value: number
 }
 
 /** Tx per SPEC Section 6 */
 export interface Tx {
   index: number
-  txid: RawHash
+  txid: Uint8Array
   fee: number
   version: number
   locktime: number
@@ -133,13 +136,60 @@ export interface Tx {
 /** Block per SPEC Section 5 */
 export interface Block {
   height: number
-  hash: RawHash
+  hash: Uint8Array
   parent: Link | null
   block: number
   tx: number
   time: number
   txs: Link
   v: number
+}
+
+// ============================================================================
+// Asset indexer types
+// ============================================================================
+
+/** Asset metadata from a CETCH operation */
+export interface Asset {
+  asset_id: Uint8Array
+  etch_txid: Uint8Array
+  ticker: string
+  decimals: number
+  commitment: Uint8Array
+  mint_authority: Uint8Array
+  image_uri: string
+  block_height: number
+  time: number
+}
+
+/** Single operation on an asset */
+export interface AssetOp {
+  txid: Uint8Array
+  opcode: string
+  asset_id: Uint8Array | null
+  block_height: number
+  time: number
+  payload: Uint8Array
+}
+
+/** Asset index root node */
+export interface AssetIndex {
+  v: number
+  assets: number
+  ops: number
+  asset_list: Link
+  op_list: Link
+}
+
+/** Internal type for a processed asset block */
+export interface ProcessedAssetBlock {
+  height: number
+  time: number
+  assetCids: CidMap
+  assetListCid: CID
+  opListCid: CID
+  assetCount: number
+  opCount: number
 }
 
 // ============================================================================
@@ -204,6 +254,12 @@ export interface DagTacitConfig {
   reorgDepth: number
   ipfsApiUrl: string
   ipfsGatewayUrl: string
+}
+
+export interface PinServiceConfig {
+  kind: 'kubo' | 'lighthouse' | 'pinata' | 'filecoin' | 'custom'
+  apiKey: string
+  apiUrl: string
 }
 
 // ============================================================================

@@ -1,0 +1,3 @@
+[submodule "tacit-spec"]
+	path = tacit-spec
+	url = https://github.com/z0r0z/tacit.git

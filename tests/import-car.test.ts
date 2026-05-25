@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { carPathForArgs, resolveFiles } from '../scripts/import-car.ts'
+import { carPathForArgs, resolveFiles } from '../scripts/blocks/blocks-import.ts'
 
 function tmpRoot(): string {
   return join(tmpdir(), `dag-tacit-import-${Date.now()}-${Math.random().toString(16).slice(2)}`)

@@ -1,4 +1,4 @@
-import type { BitcoinBlock, BitcoinRpcClient, BitcoinTx, RpcMethod, RpcParams } from './types.ts'
+import type { BitcoinBlock, BitcoinRpcClient, BitcoinTx, RpcMethod, RpcParams } from '../types.ts'
 
 export function createBitcoinRpcClient(url: string): BitcoinRpcClient {
   if (!url || url.includes('YOUR_KEY')) throw new Error('BITCOIN_RPC_URL not configured')

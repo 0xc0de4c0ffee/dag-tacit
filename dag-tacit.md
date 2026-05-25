@@ -13,7 +13,7 @@ This document specifies:
 - **Bitcoin Core JSON mapping**: how RPC fields are converted into normalized DAG fields.
 - **Deterministic encoding rules**: constraints required for reproducible CIDs.
 
-The Tacit protocol itself, including envelope layout, opcodes, payloads, and balance rules, is defined by the upstream Tacit specification.
+The Tacit protocol itself, including envelope layout, opcodes, payloads, and balance rules, is defined by the upstream Tacit specification. Per-opcode wire formats are documented in the [opcode index](./opcodes/index.md) with [individual files](./opcodes/0x21-cetch.md) for each opcode.
 
 Packaging and transport formats, including CAR files, IPFS import flows, RPC capture, and local build pipelines, are out of scope. Such layers MAY wrap these IPLD values, but MUST NOT alter the normative field sets or encoding rules defined here.
 
@@ -87,7 +87,7 @@ Implementation note: an indexer MAY prefilter candidates before envelope decodin
 ```ipldsch
 type Block struct {
   height Uint
-  hash &RawHash
+  hash bytes[32]
   parent nullable &Block
   block Uint
   tx Uint
@@ -102,7 +102,7 @@ type TxList [&Tx]
 | Field | Type | Description |
 |-------|------|-------------|
 | `height` | `uint` | Bitcoin block height. |
-| `hash` | `&RawHash` | CID link to 32-octet block header hash. |
+| `hash` | `bytes[32]` | 32-octet block header hash. |
 | `parent` | `CID \| null` | CID of the predecessor `Block`, or null at the head anchor. |
 | `block` | `uint` | Zero-based tacit block index. |
 | `tx` | `uint` | Number of Tacit transactions in `txs`. |
@@ -128,7 +128,7 @@ type Tx struct {
   fee Uint
   index Uint
   locktime Uint
-  txid &RawHash
+  txid bytes[32]
   version Uint
   vin &VinList
   vout &VoutList
@@ -143,7 +143,7 @@ type VoutList [&VoutEntry]
 | `fee` | `uint` | Fee in satoshis. |
 | `index` | `uint` | Index in the parent block's `tx` array. |
 | `locktime` | `uint` | Transaction `locktime`. |
-| `txid` | `&RawHash` | CID link to 32-octet txid. |
+| `txid` | `bytes[32]` | 32-octet transaction id. |
 | `version` | `uint` | Transaction `version`. |
 | `vin` | `CID` | CID of DAG-CBOR array of `VinEntry` CIDs in `vin[]` order. |
 | `vout` | `CID` | CID of DAG-CBOR array of `VoutEntry` CIDs in `vout[]` order. |
@@ -161,7 +161,7 @@ type VinEntry struct {
   prevout Bytes
   sig Bytes
   sequence Uint
-  txid &RawHash
+  txid bytes[32]
   value Uint
   vout Uint
   witness &WitnessList
@@ -175,7 +175,7 @@ type WitnessList [&WitnessData]
 | `prevout` | `bytes` | Decoded `prevout.scriptPubKey.hex`; zero length if absent. |
 | `sig` | `bytes` | Decoded `scriptSig.hex`; zero length if absent. |
 | `sequence` | `uint` | Input `sequence`. |
-| `txid` | `&RawHash` | CID link to 32-octet previous output txid; 32 zero octets for coinbase. |
+| `txid` | `bytes[32]` | 32-octet previous output txid; 32 zero octets for coinbase. |
 | `value` | `uint` | Previous output value in satoshis; `0` if absent. |
 | `vout` | `uint` | Previous output index. |
 | `witness` | `&WitnessList` | CID link to DAG-CBOR array of witness item CIDs. Empty array if no witness. |
@@ -191,7 +191,7 @@ Tacit envelope bytes and opcode MUST NOT be duplicated in separate DAG fields. C
 
 ```ipldsch
 type VoutEntry struct {
-  pubkey Bytes
+  pubkey bytes
   value Uint
 }
 ```
@@ -245,6 +245,97 @@ Invariants:
 1. If `blocks` is `N`, the key set MUST be exactly `{"0", "1", ..., "N-1"}`.
 2. Each key MUST equal the decimal representation of the referenced `Block.block`.
 
+## Asset IPLD
+
+`Asset` represents a CETCH-deployed token with its metadata. One `Asset` node per unique token.
+
+- **Serialization**: DAG-CBOR map.
+- **CID**: CIDv1, dag-cbor multicodec `0x71`, SHA-256 multihash.
+- **Links**: none — all fields are inline bytes or integers.
+
+```ipldsch
+type Asset struct {
+  asset_id bytes[32]
+  etch_txid bytes[32]
+  ticker String
+  decimals Uint
+  commitment bytes[33]
+  mint_authority bytes[32]
+  image_uri String
+  block_height Uint
+  time Uint
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `asset_id` | `bytes[32]` | `SHA256(etch_txid_BE \|\| 0x00)`. Canonical asset identifier. |
+| `etch_txid` | `bytes[32]` | Bitcoin txid of the reveal that created the CETCH token. |
+| `ticker` | `string` | UTF-8 ticker symbol. 1–16 characters. |
+| `decimals` | `uint` | Decimal places. MUST be ≤ 8. |
+| `commitment` | `bytes[33]` | Pedersen commitment (compressed secp256k1 point). |
+| `mint_authority` | `bytes[32]` | X-only pubkey for T_MINT authorization. All-zero = non-mintable. |
+| `image_uri` | `string` | Optional IPFS/image URI. Empty string if absent. |
+| `block_height` | `uint` | Bitcoin block height of the CETCH reveal. |
+| `time` | `uint` | Block header timestamp at CETCH reveal. |
+
+## AssetOp IPLD
+
+`AssetOp` represents one operation on an asset (CETCH, CXFER, T_MINT, T_BURN, etc.).
+
+- **Serialization**: DAG-CBOR map.
+- **CID**: CIDv1, dag-cbor multicodec `0x71`, SHA-256 multihash.
+- **Links**: none — `asset_id` is an inline bytes field, not a CID link.
+
+```ipldsch
+type AssetOp struct {
+  txid bytes[32]
+  opcode String
+  asset_id nullable bytes[32]
+  block_height Uint
+  time Uint
+  payload Bytes
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `txid` | `bytes[32]` | Bitcoin txid of the operation. |
+| `opcode` | `string` | Opcode name (e.g. `"CXFER"`, `"T_MINT"`, `"T_DROP"`). |
+| `asset_id` | `bytes[32] \| null` | Referenced asset ID. `null` for CETCH (which defines a new asset). |
+| `block_height` | `uint` | Bitcoin block height. |
+| `time` | `uint` | Block header timestamp. |
+| `payload` | `bytes` | Raw envelope payload (opcode byte + fields). |
+
+## Asset Index IPLD
+
+The asset index is a DAG-CBOR map referencing all indexed assets and operations.
+
+- **Serialization**: DAG-CBOR map.
+- **CID**: CIDv1, dag-cbor multicodec `0x71`, SHA-256 multihash.
+- **Links**: `asset_list` links to a CID array of `Asset` CIDs; `op_list` links to a CID array of `AssetOp` CIDs.
+
+```ipldsch
+type AssetIndex struct {
+  v Uint
+  assets Uint
+  ops Uint
+  asset_list &AssetList
+  op_list &OpList
+}
+
+type AssetList [&Asset]
+type OpList [&AssetOp]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `v` | `uint` | Schema version; MUST be `1`. |
+| `assets` | `uint` | Count of indexed assets. |
+| `ops` | `uint` | Count of indexed operations. |
+| `asset_list` | `CID` | CID of DAG-CBOR array of `Asset` CIDs in discovery order. |
+| `op_list` | `CID` | CID of DAG-CBOR array of `AssetOp` CIDs in block-height order. |
+
 ## Mapping from Bitcoin Core JSON
 
 Decoded transaction JSON from `getrawtransaction(txid, true, blockhash)` or verbose transaction objects from `getblock(hash, 2)` represents monetary amounts as JSON numbers in BTC.
@@ -288,7 +379,7 @@ Decoded `Block`:
 ```json
 {
   "height": 948242,
-  "hash": "bafkreih5qnrhys5uqdcmrfxxdw2oa6ywd5qw2mxq7hfwpnkci2knnxkv24",
+  "hash": "0000000000000000000282b8c1f3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
   "parent": null,
   "block": 0,
   "tx": 2,
@@ -320,7 +411,7 @@ Decoded `Block`:
 ```json
 {
   "height": 948247,
-  "hash": "bafkreigfj3kzv6hj3ad4s5w3qy24tfkuy2mjiit7j5gzq3q3t7q7y7y7y7",
+  "hash": "00000000000000000001a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4",
   "parent": "bafyreifiyb6xkabgywkuuiwvu4sgs6ph64qe6eyvyu5nixzmowypiuippy",
   "block": 1,
   "tx": 1,
@@ -342,3 +433,13 @@ Decoded `Block`:
 ## Security Considerations
 
 This index is a cache of public chain data. Implementations MUST NOT treat it as authoritative for value transfer without validating against a Bitcoin full node and appropriate user approval of spends.
+
+## Debug Metadata (Non-normative)
+
+The build pipeline MAY emit **debug metadata** for transactions that pass the Tacit magic-bytes check (`0x5441434954` in `vin[0].witness[1]`) but fail deeper validation (malformed envelope frame, bad version, unknown opcode, payload decode error). This metadata is **NOT** part of the IPLD DAG-CBOR schema and MUST NOT be included in CAR files or the block index.
+
+- **Purpose**: Chain security monitoring, fork detection, protocol debugging.
+- **Format**: JSON files and append-only logs, outside the IPLD namespace.
+- **Fields**: `txid` (string), `error` (string), `witness_hex` (string).
+
+Debug metadata is implementation-specific and MAY be collected by indexers separately for further analysis and future upgrades.

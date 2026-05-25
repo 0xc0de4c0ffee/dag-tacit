@@ -2,28 +2,44 @@
 
 > **DRAFT** — not yet finalized for v1. Schema and APIs may change.
 
-DAG-CBOR index builder for the Tacit protocol on Bitcoin. Implements the [dag-tacit SPEC](./SPEC.md).
+DAG-CBOR index builder for the Tacit protocol on Bitcoin. Implements the [dag-tacit SPEC](./dag-tacit.md). Authoritative Tacit protocol spec lives in the [tacit-spec submodule](./tacit-spec/SPEC.md) (github.com/z0r0z/tacit).
 
 ## Architecture
 
 ```
 dag-tacit/
 ├── scripts/
-│   ├── fetch-blocks.ts     # Fetch Bitcoin blocks with Tacit txns
-│   ├── build-dag.ts        # Build DAG-CBOR nodes
-│   ├── create-car.ts       # Assemble CAR files (block/range/daily)
-│   ├── import-car.ts       # Import CAR into IPFS
-│   └── full.ts             # Pipeline: fetch → build → car
+│   ├── blocks/
+│   │   ├── fetch.ts        # Fetch Bitcoin blocks with Tacit txns
+│   │   ├── dag.ts          # Build DAG-CBOR nodes
+│   │   ├── car.ts          # Assemble CAR files (block/range/daily)
+│   │   ├── import.ts       # Import CAR into IPFS / pinning services
+│   │   └── full.ts         # Pipeline: fetch → dag → car
+│   ├── assets/
+│   │   ├── assets-dag.ts   # Build per-block asset DAG-CBOR JSON
+│   │   ├── assets-car.ts   # Build per-block asset CAR files
+│   │   ├── assets-build.ts # Build unified asset index
+│   │   └── assets-full.ts  # Pipeline: dag -> car -> build
+│   └── utils.ts            # Shared script helpers
 ├── src/
 │   ├── index.ts            # Barrel export for external consumers
 │   ├── types.ts            # Shared TypeScript interfaces
-│   ├── dag-cbor.ts         # CID & encoding utilities
-│   ├── envelope.ts         # Tacit envelope detection
-│   ├── nodes.ts            # Block/Tx/VinEntry/VoutEntry builders
-│   ├── car.ts              # CAR file assembly
-│   ├── config.ts           # .env config loader
-│   ├── reorg.ts            # Reorg detection logic
-│   └── rpc.ts              # Bitcoin JSON-RPC client
+│   ├── config.ts           # ALL constants, opcodes, genesis height, config loader
+│   ├── assets/
+│   │   ├── assets-parse.ts # Asset parsing (CETCH payload, processBlockAssets)
+│   │   ├── assets-nodes.ts # Asset & AssetOp DAG-CBOR node builders
+│   │   └── assets-block.ts # Per-block asset processing + CAR file builder
+│   ├── blocks/
+│   │   ├── blocks-nodes.ts # Block/Tx/VinEntry/VoutEntry builders
+│   │   └── blocks-car.ts   # Block CAR assembly, range root, block index
+│   └── lib/
+│       ├── dag-cbor.ts     # Encoding, CID, hex helpers
+│       ├── envelope.ts     # Tacit envelope detection & payload decoding
+│       ├── car.ts          # Generic CAR helpers
+│       ├── pin.ts          # IPFS/Filecoin pinning (Kubo, Lighthouse, Pinata, Custom)
+│       ├── rpc.ts          # Bitcoin JSON-RPC client
+│       ├── reorg.ts        # Reorg detection logic
+│       └── utils.ts        # jsonNode, utcDay
 ├── tests/
 │   ├── *.test.ts            # Bun test suite
 │   └── fixtures/            # 25 genesis block JSON fixtures
@@ -31,6 +47,7 @@ dag-tacit/
 └── out/
     ├── tacit-blocks/       # Compact per-block Tacit tx artifacts (JSON)
     ├── dag-nodes/          # DAG-CBOR nodes (JSON)
+    ├── assets/             # Asset index (JSON + CAR)
     └── car/                # Output CAR files
 ```
 
@@ -52,6 +69,7 @@ bun run fetch       # Download blocks with Tacit transactions
 bun run dag         # Build DAG-CBOR nodes
 bun run car         # Create per-block CAR files
 bun run car:range   # Also create range + daily CARs
+bun run assets      # Build asset index from Tacit operations
 ```
 
 ## Commands
@@ -123,6 +141,20 @@ Creates a single range CAR plus daily CARs in addition to per-block CARs.
 bun run car:range
 ```
 
+### `bun run assets [--from N] [--to N] [--force] [--help]`
+
+Builds an asset index from Tacit operations found in block artifacts.
+
+- Parses CETCH payloads to extract asset metadata (ticker, decimals, commitment, mint authority, image URI)
+- Tracks all asset operations: CXFER, T_MINT, T_BURN, T_AXFER, T_DROP, T_DCLAIM, T_LP_ADD, T_LP_REMOVE, T_SWAP_BATCH, T_SWAP_VAR, T_DEPOSIT, T_WITHDRAW, T_PETCH, T_PMINT, T_INTENT_ATTEST, T_PROTOCOL_FEE_CLAIM, T_AXFER_VAR, T_WRAPPER_ATTEST
+- Writes `out/assets/index.json` (global index) and per-asset JSON files
+- Output is deterministic: no timestamps, stable field order
+
+```bash
+bun run assets
+bun run assets --from 948242 --to 949069
+```
+
 ### `bun run build`
 
 Builds the library for distribution.
@@ -151,6 +183,9 @@ out/
 │       ├── dag-tacit-0-948242.json
 │       ├── dag-tacit-1-948247.json
 │       └── ...................json
+├── assets/
+│   ├── index.json
+│   └── <asset_id_hex>.json      # per-asset operation history
 └── car/
     ├── index.json
     ├── blocks/
@@ -171,17 +206,21 @@ out/
 
 ## Data Model
 
-Implements the normative DAG-CBOR types from the SPEC:
+Implements the normative DAG-CBOR types from [dag-tacit.md](./dag-tacit.md) and the wire format specs in [`opcodes/`](./opcodes/):
 
-| Node | SPEC Type | Fields |
+| Node | SPEC Section | Fields |
 |------|--------------|--------|
 | `Block` | Block IPLD | height, hash, parent, block, tx, time, txs, v |
 | `Tx` | Transaction IPLD | index, txid, fee, version, locktime, vin, vout |
 | `VinEntry` | VinEntry IPLD | txid, vout, sequence, witness, sig, value, prevout |
-| `VoutEntry` | VoutEntry IPLD | value, pubkey |
+| `VoutEntry` | VoutEntry IPLD | pubkey, value |
 | Range Root | Range Root IPLD | v, genesis, from, to, blocks, tx, index |
+| Block Index | Block Index IPLD | `"0" → CID, "1" → CID, ...` |
+| `Asset` | Asset IPLD | asset_id, etch_txid, ticker, decimals, commitment, mint_authority, image_uri, block_height, time |
+| `AssetOp` | AssetOp IPLD | txid, opcode, asset_id, block_height, time, payload |
+| Asset Index | Asset Index IPLD | v, assets, ops, asset_list, op_list |
 
-All monetary values in **satoshis** (uint). All hashes as **bytes[32]**.
+All monetary values in **satoshis** (uint). All hashes as **bytes[32]**. See [`opcodes/`](./opcodes/) for the complete opcode wire format reference.
 
 ## Spec Compliance
 
@@ -213,6 +252,40 @@ All monetary values in **satoshis** (uint). All hashes as **bytes[32]**.
 | T_PMINT | 0x28 | ✅ Detected & validated |
 | T_DEPOSIT | 0x29 | ✅ Detected & validated |
 | T_WITHDRAW | 0x2a | ✅ Detected & validated |
+| T_DROP | 0x2b | ✅ Detected & validated |
+| T_DCLAIM | 0x2c | ✅ Detected & validated |
+| T_LP_ADD | 0x2d | ✅ Detected & validated |
+| T_LP_REMOVE | 0x2e | ✅ Detected & validated |
+| T_SWAP_BATCH | 0x2f | ✅ Detected & validated |
+| T_INTENT_ATTEST | 0x30 | ✅ Detected & validated |
+| T_PROTOCOL_FEE_CLAIM | 0x31 | ✅ Detected & validated |
+| T_SWAP_VAR | 0x32 | ✅ Detected & validated |
+| T_AXFER_VAR | 0x37 | ✅ Detected & validated |
+| T_WRAPPER_ATTEST | 0x38 | ✅ Detected & validated |
+
+## Future Plans
+
+### Asset CAR Files
+
+The asset indexer currently writes JSON. Next stage will produce immutable, deterministic CAR files for assets:
+
+- **Per-asset CAR**: Each asset gets its own CAR file containing the `Asset` node + all linked `AssetOp` nodes, rooted at the asset CID
+- **Asset range CAR**: Bundles multiple asset CARs into a range root with an asset index map
+- **Daily asset CAR**: Grouped by UTC day, same pattern as block daily CARs
+- **Unified import**: `bun run import --asset <asset_id>` to import a single asset CAR, or `bun run import --assets` for the full asset index
+
+### Asset Transfer History
+
+Per-asset JSON will expand to include:
+
+- `transfers`: List of CXFER / T_AXFER / T_AXFER_VAR operations with input/output commitment pointers
+- `mints`: T_MINT + T_PMINT operations with mint authority verification status
+- `burns`: T_BURN operations with public burned amounts
+- `pool_ops`: T_LP_ADD, T_LP_REMOVE, T_SWAP_BATCH, T_SWAP_VAR operations linked to AMM pool state
+- `shield_ops`: T_DEPOSIT, T_WITHDRAW operations for mixer pool tracking
+- `drop_ops`: T_DROP + T_DCLAIM operations for public-claim pools
+
+All additions follow the same deterministic encoding rules: no timestamps in index JSON, stable field order, DAG-CBOR blocks with CIDv1 + SHA-256.
 
 ## CAR File Format
 
@@ -258,6 +331,16 @@ bun run import --to 948272         # import from last stored block up to 948272
 ```
 
 The importer reads `IPFS_API_URL` and `IPFS_GATEWAY_URL` from `.env` (defaulting to local Kubo at `http://127.0.0.1:5001` and `http://127.0.0.1:8080`). Override per-run with `--api` and `--gateway` flags.
+
+## Debug / Chain Watch
+
+Transactions that pass the Tacit magic-bytes check but fail deeper validation (malformed envelope, unknown opcode, bad version) are captured as **debug metadata** — they are NOT included in DAG-CBOR nodes.
+
+- **Per-block JSON**: `out/debug/<height>-debug.json`
+- **Append-only log**: `out/debug/debug.log`
+- **Fields**: `txid`, `error`, `witness_hex`
+
+This is used for chain security monitoring, fork detection, and protocol debugging without polluting the canonical IPLD index. Future work may package debug logs into their own daily/weekly CAR files.
 
 ## Development
 

@@ -4,20 +4,18 @@ import { basename, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 import { CarReader } from '@ipld/car'
-import { loadConfig } from '../src/config.ts'
-import { createBitcoinRpcClient } from '../src/rpc.ts'
+import { loadConfig, TACIT_GENESIS_HEIGHT } from '../../src/config.ts'
+import { createBitcoinRpcClient } from '../../src/lib/rpc.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const ROOT = resolve(__dirname, '..')
+const ROOT = resolve(__dirname, '../..')
 const CAR_DIR = resolve(ROOT, 'out', 'car')
-const GENESIS_HEIGHT = 948242
 const cfg = loadConfig()
 const DEFAULT_API = cfg.ipfsApiUrl
 const DEFAULT_GATEWAY = cfg.ipfsGatewayUrl
 
 async function getTipHeight(): Promise<number> {
-  const config = loadConfig()
-  const rpc = createBitcoinRpcClient(config.bitcoinRpcUrl)
+  const rpc = createBitcoinRpcClient(cfg.bitcoinRpcUrl)
   return rpc('getblockcount') as Promise<number>
 }
 
@@ -50,6 +48,12 @@ const api = String(flags.get('--api') ?? process.env.IPFS_API_URL ?? DEFAULT_API
 const gateway = String(flags.get('--gateway') ?? process.env.IPFS_GATEWAY_URL ?? DEFAULT_GATEWAY).replace(/\/$/, '')
 const pinRoots = flags.get('--pin-roots') !== 'false'
 const dryRun = flags.has('--dry-run')
+const verbose = flags.has('--verbose') || flags.has('-v')
+const threads = Math.max(1, Number(flags.get('--threads') ?? flags.get('-t') ?? 3))
+
+function domainOnly(url: string): string {
+  try { return new URL(url).hostname } catch { return url }
+}
 
 function usage(): never {
   console.error(`Usage:
@@ -67,6 +71,8 @@ Options:
   --gateway <url>      Gateway URL for printed root links, default ${DEFAULT_GATEWAY}
   --pin-roots=false    Do not pin imported roots
   --dry-run            Resolve and inspect CAR without importing
+  --threads, -t <n>    Import concurrency (default: 3)
+  --verbose, -v        Show full API URLs and curl commands
   --from <height>      Start BTC height (inclusive). Defaults to last stored block, or genesis.
   --to <height>        End BTC height (inclusive). Defaults to current chain tip.`)
   process.exit(0)
@@ -167,12 +173,12 @@ export async function resolveFiles(flags: Map<string, string | boolean>, positio
     if (to !== null && !Number.isFinite(to)) throw new Error(`Invalid --to value: ${flags.get('--to')}`)
 
     if (from === null) {
-      from = getLastStoredHeight(root) ?? GENESIS_HEIGHT
-      console.log(`[resolve] --from not set; using stored/genesis: ${from}`)
+      from = getLastStoredHeight(root) ?? TACIT_GENESIS_HEIGHT
+      if (verbose) console.log(`[resolve] --from not set; using stored/genesis: ${from}`)
     }
     if (to === null) {
-      to = await getTipHeight(root)
-      console.log(`[resolve] --to not set; using chain tip: ${to}`)
+      to = await getTipHeight()
+      if (verbose) console.log(`[resolve] --to not set; using chain tip: ${to}`)
     }
 
     if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error('Invalid range')
@@ -192,21 +198,42 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (flags.has('--help') || flags.has('-h')) usage()
   try {
     const files = await resolveFiles(flags, positionals)
-    for (const file of files) {
+    if (files.length === 0) {
+      console.log('[done] No CAR files to import')
+      process.exit(0)
+    }
+
+    async function importOne(file: string): Promise<void> {
       if (!existsSync(file)) throw new Error(`CAR file not found: ${file}`)
       const roots = await readRoots(file)
       console.log(`[car] ${file}`)
       console.log(`[roots] ${roots.join(', ')}`)
       for (const root of roots) {
-        console.log(`[dag-get] curl -X POST '${api}/api/v0/dag/get?arg=${root}'`)
+        if (verbose) console.log(`[dag-get] curl -X POST '${api}/api/v0/dag/get?arg=${root}'`)
         console.log(`[gateway] ${gateway}/ipfs/${root}`)
       }
-      if (dryRun) continue
-      console.log(`[ipfs] importing via ${api} pinRoots=${pinRoots}`)
+      if (dryRun) return
+      console.log(`[ipfs] importing via ${domainOnly(api)} pinRoots=${pinRoots}`)
       const output = await importCar(file)
       if (output) console.log(output)
     }
-    console.log('[done] CAR imported')
+
+    let idx = 0
+    const errors: Error[] = []
+    await Promise.all(Array.from({ length: threads }, async () => {
+      while (true) {
+        const i = idx++
+        if (i >= files.length) return
+        try {
+          await importOne(files[i])
+        } catch (e) {
+          errors.push(e as Error)
+        }
+      }
+    }))
+
+    if (errors.length > 0) throw errors[0]
+    console.log(`[done] ${files.length} CAR(s) imported (${threads}x concurrency)`)
   } catch (e) {
     console.error(`[error] ${(e as Error).message}`)
     process.exit(1)

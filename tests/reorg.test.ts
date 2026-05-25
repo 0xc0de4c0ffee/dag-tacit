@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { findReorgCutoff } from '../src/reorg.ts'
+import { findReorgCutoff } from '../src/lib/reorg.ts'
 
 describe('reorg', () => {
   test('returns null when all hashes match', () => {

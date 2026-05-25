@@ -4,7 +4,7 @@ import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const ROOT = resolve(__dirname, '..')
+const ROOT = resolve(__dirname, '../..')
 const args = process.argv.slice(2)
 
 if (args.includes('--help') || args.includes('-h')) {
@@ -33,9 +33,7 @@ function run(command: string, args: string[]): Promise<void> {
 }
 
 try {
-  await run('bun', ['scripts/fetch-blocks.ts', ...args])
-  await run('bun', ['scripts/build-dag.ts', ...args])
-  await run('bun', ['scripts/create-car.ts', '--blocks-only', ...args])
+  await run('bun', ['scripts/blocks/blocks-fetch.ts', '--dag', '--car', ...args])
 } catch (e) {
   console.error(`\nfull pipeline failed: ${(e as Error).message}`)
   process.exit(1)

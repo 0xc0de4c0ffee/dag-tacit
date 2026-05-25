@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import * as dagCbor from '@ipld/dag-cbor'
 import { CID } from 'multiformats/cid'
-import { encodeNode, hexToBytes } from '../src/dag-cbor.ts'
-import { buildVinEntry, buildVoutEntry, processBlock } from '../src/nodes.ts'
+import { encodeNode, hexToBytes } from '../src/lib/dag-cbor.ts'
+import { buildVinEntry, buildVoutEntry, processBlock } from '../src/blocks/blocks-nodes.ts'
 import type { BitcoinBlock } from '../src/types.ts'
 
 function envelopeScript(opcodeHex = '21'): string {
@@ -45,13 +45,14 @@ describe('DAG node builders', () => {
     expect(Object.keys(node)).toEqual(['txid', 'vout', 'sequence', 'witness', 'sig', 'value', 'prevout'])
     expect(node.value).toBe(123)
     expect(node.witness).toBeInstanceOf(CID)
-    expect(node.txid).toBeInstanceOf(CID)
+    expect(node.txid).toBeInstanceOf(Uint8Array)
   })
 
   test('builds VoutEntry with exact Section 8 fields', () => {
     const vout = fixtureBlock().tx[0].vout[0]
     const node = buildVoutEntry(vout)
-    expect(Object.keys(node)).toEqual(['value', 'pubkey'])
+    expect(Object.keys(node)).toEqual(['pubkey', 'value'])
+    expect(node.pubkey).toBeInstanceOf(Uint8Array)
     expect(node.value).toBe(1)
   })
 
@@ -68,7 +69,7 @@ describe('DAG node builders', () => {
     expect(block.block).toBe(0)
     expect(block.parent).toBeNull()
     expect(block.height).toBe(948242)
-    expect(block.hash).toBeInstanceOf(CID)
+    expect(block.hash).toBeInstanceOf(Uint8Array)
     expect(block.tx).toBe(1)
     expect(block.time).toBe(1778117538)
     expect(block.txs).toBeInstanceOf(CID)

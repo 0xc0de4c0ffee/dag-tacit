@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { CarReader } from '@ipld/car'
 import * as dagCbor from '@ipld/dag-cbor'
 import { CID } from 'multiformats/cid'
-import { buildBlockCarFile, buildBlockIndex, buildCarFile, buildRangeRoot } from '../src/car.ts'
-import { processBlock } from '../src/nodes.ts'
+import { buildBlockCarFile, buildBlockIndex, buildCarFile, buildRangeRoot } from '../src/blocks/blocks-car.ts'
+import { processBlock } from '../src/blocks/blocks-nodes.ts'
 import type { BitcoinBlock } from '../src/types.ts'
 
 function envelopeScript(opcodeHex = '21'): string {
@@ -75,7 +75,7 @@ describe('range root, block index, and CAR', () => {
     expect(decoded.block).toBe(4)
     expect((decoded.parent as CID).toString()).toBe(prev!.blockCid.toString())
     expect(decoded.height).toBe(10)
-    expect(decoded.hash).toBeInstanceOf(CID)
+    expect(decoded.hash).toBeInstanceOf(Uint8Array)
     expect(decoded.txs).toBeDefined()
     expect(decoded.index).toBeUndefined()
   })

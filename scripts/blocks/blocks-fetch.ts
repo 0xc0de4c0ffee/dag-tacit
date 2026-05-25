@@ -2,46 +2,55 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { loadConfig } from '../src/config.ts'
-import { createBitcoinRpcClient, fetchVerboseBlock } from '../src/rpc.ts'
-import { extractTacitPayload, witnessHasTacitMagicHex } from '../src/envelope.ts'
-import type { BitcoinBlock, BitcoinTx } from '../src/types.ts'
+import { CID } from 'multiformats/cid'
+import { loadConfig } from '../../src/config.ts'
+import { createBitcoinRpcClient, fetchVerboseBlock } from '../../src/lib/rpc.ts'
+import { extractEnvelopeContent, witnessHasTacitMagicHex } from '../../src/lib/envelope.ts'
+import { bytesToHex } from '../../src/lib/dag-cbor.ts'
+import { jsonNode, utcDay } from '../../src/lib/utils.ts'
+import { processBlock } from '../../src/blocks/blocks-nodes.ts'
+import { buildBlockCarFile } from '../../src/blocks/blocks-car.ts'
+import { flagValue } from '../utils.ts'
+import type { BitcoinTx, DebugTx, ProcessedBlock } from '../../src/types.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const ROOT = resolve(__dirname, '..')
+const ROOT = resolve(__dirname, '../..')
 const OUT_DIR = resolve(ROOT, 'out', 'tacit-blocks')
+const DAG_DIR = resolve(ROOT, 'out', 'dag-nodes')
+const CAR_DIR = resolve(ROOT, 'out', 'car', 'blocks')
+const DEBUG_DIR = resolve(ROOT, 'out', 'debug')
 const OUT_REL = 'out/tacit-blocks'
 mkdirSync(OUT_DIR, { recursive: true })
+mkdirSync(DAG_DIR, { recursive: true })
+mkdirSync(CAR_DIR, { recursive: true })
+mkdirSync(DEBUG_DIR, { recursive: true })
 
 const config = loadConfig()
 const START_HEIGHT = config.startHeight
 const argv = process.argv.slice(2)
 const force = argv.includes('--force')
+const writeDag = argv.includes('--dag')
+const writeCar = argv.includes('--car')
+const writeDebug = argv.includes('--debug')
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: bun run fetch [options]
 
 Fetch Bitcoin blocks via RPC, filter Tacit transactions, and store artifacts.
+Optional per-block DAG (--dag) and CAR (--car) pipeline.
 
 Options:
   --from <height>    Starting BTC block height (default: resume from index or genesis ${START_HEIGHT})
   --to <height>      Ending BTC block height (default: chain tip)
   --force            Re-fetch and overwrite existing blocks
+  --dag              Build DAG-CBOR nodes per block (writes out/dag-nodes/)
+  --car              Build CAR files per block (writes out/car/blocks/)
+  --debug            Write per-block debug JSON for failed txs
   -t, --threads N    Concurrency (default: 5)
   --help, -h         Show this help`)
   process.exit(0)
 }
 
-function flagValue(...names: string[]): string | null {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    for (const name of names) {
-      if (arg === name) return argv[i + 1]
-      if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1)
-    }
-  }
-  return null
-}
 
 const positional = argv.filter((a, i) => !a.startsWith('-') && !['-t', '--thread', '--threads'].includes(argv[i - 1]))
 
@@ -51,17 +60,9 @@ if (!config.bitcoinRpcUrl || config.bitcoinRpcUrl.includes('YOUR_KEY')) {
   process.exit(1)
 }
 
-const CONCURRENCY = Math.max(1, parseInt(flagValue('-t', '--thread', '--threads') || '5'))
+const CONCURRENCY = Math.max(1, parseInt(flagValue(argv, '-t', '--thread', '--threads') || '5'))
 const rpc = createBitcoinRpcClient(config.bitcoinRpcUrl)
 let active = 0
-
-function payloadHex(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString('hex')
-}
-
-function utcDay(time: number): string {
-  return new Date(time * 1000).toISOString().slice(0, 10)
-}
 
 function tacitBlockFile(tacitBlock: number, height: number): string {
   return `dag-tacit-${tacitBlock}-${height}.json`
@@ -74,7 +75,9 @@ interface FetchedBlock {
   time: number
   tx_count: number
   tacit_count: number
+  debug_count: number
   txs: BitcoinTx[]
+  debug_txs: DebugTx[]
 }
 
 async function fetchBlock(height: number): Promise<FetchedBlock | null> {
@@ -87,14 +90,15 @@ async function fetchBlock(height: number): Promise<FetchedBlock | null> {
 
     const tScan = Date.now()
     const tacitTxs: BitcoinTx[] = []
+    const debugTxs: DebugTx[] = []
     let candidates = 0
     for (let txIndex = 0; txIndex < block.tx.length; txIndex++) {
       const tx = block.tx[txIndex]
       const witnessHex = tx.vin?.[0]?.txinwitness?.[1]
       if (!witnessHex || !witnessHasTacitMagicHex(witnessHex)) continue
       candidates++
-      const result = extractTacitPayload(tx)
-      if (result.ok) {
+      const envelope = extractEnvelopeContent(tx)
+      if (envelope.ok) {
         tacitTxs.push({
           tx_index: txIndex,
           txid: tx.txid,
@@ -131,15 +135,13 @@ async function fetchBlock(height: number): Promise<FetchedBlock | null> {
               address: o.scriptPubKey?.address,
               addresses: o.scriptPubKey?.addresses
             }
-          })),
-          _tacit: {
-            opcode: result.opcode,
-            payload_hex: payloadHex(result.payload)
-          }
+          }))
         } as BitcoinTx)
+      } else {
+        debugTxs.push({ txid: tx.txid, error: envelope.error, witness_hex: witnessHex } as DebugTx)
       }
     }
-    console.log(`[scan]  #${height} candidates=${candidates} tacit=${tacitTxs.length} in ${((Date.now() - tScan) / 1000).toFixed(2)}s`)
+    console.log(`[scan]  #${height} candidates=${candidates} tacit=${tacitTxs.length} debug=${debugTxs.length} in ${((Date.now() - tScan) / 1000).toFixed(2)}s`)
 
     if (!tacitTxs.length) return null
 
@@ -150,26 +152,32 @@ async function fetchBlock(height: number): Promise<FetchedBlock | null> {
       time: block.time,
       tx_count: block.nTx,
       tacit_count: tacitTxs.length,
-      txs: tacitTxs
+      debug_count: debugTxs.length,
+      txs: tacitTxs,
+      debug_txs: debugTxs,
     }
   } finally {
     active--
   }
 }
 
-const fromFlag = flagValue('--from')
-const toFlag = flagValue('--to')
+const fromFlag = flagValue(argv, '--from')
+const toFlag = flagValue(argv, '--to')
 const start = fromFlag ? parseInt(fromFlag) : (positional[0] ? parseInt(positional[0]) : 0)
 const tip = await rpc('getblockcount') as number
 const end = toFlag ? parseInt(toFlag) : (positional[1] ? parseInt(positional[1]) : tip)
 
 let resume = start
 if (!start) {
-  const idxPath = resolve(OUT_DIR, 'index.json')
-  if (existsSync(idxPath)) {
-    const idx = JSON.parse(readFileSync(idxPath, 'utf8')) as { last_processed?: number }
-    resume = (idx.last_processed ?? START_HEIGHT - 1) + 1
-    console.log(`Resume from #${resume} (tip: #${tip}, last: #${idx.last_processed})`)
+  if (force) {
+    resume = START_HEIGHT
+    console.log(`--force: starting from Tacit genesis height #${START_HEIGHT}`)
+  } else if (existsSync(resolve(OUT_DIR, 'index.json'))) {
+    const idx = JSON.parse(readFileSync(resolve(OUT_DIR, 'index.json'), 'utf8')) as { blocks?: { height: number }[] }
+    const heights = idx.blocks?.map(b => b.height) ?? []
+    const lastProcessed = heights.length ? Math.max(...heights) : START_HEIGHT - 1
+    resume = lastProcessed + 1
+    console.log(`Resume from #${resume} (tip: #${tip}, last: #${lastProcessed})`)
   } else {
     resume = START_HEIGHT
     console.log(`Starting from Tacit genesis height #${START_HEIGHT}`)
@@ -270,7 +278,6 @@ if (existsSync(idxFilePath)) {
         }
 
         idx.blocks = idx.blocks.filter(b => b.height < cutoff)
-        idx.last_processed = cutoff - 1
         idx.total_blocks = idx.blocks.length
         idx.total_envs = idx.blocks.reduce((s, b) => s + (b.tacit_count ?? 0), 0)
         writeFileSync(idxFilePath, JSON.stringify(idx, null, 2) + '\n')
@@ -290,65 +297,55 @@ console.log(`\nFetching ${resume} → ${end} (${end - resume + 1} blocks, ${CONC
 console.log(`[init] network=${config.bitcoinNetwork} out=${OUT_REL} force=${force}`)
 
 const heights = Array.from({ length: end - resume + 1 }, (_, i) => resume + i)
-let idx = 0, done = 0, last = resume - 1
+let idx = 0, done = 0
 const t0 = Date.now()
 const seen = new Set<number>()
 const processed = new Set<number>()
 
 interface IndexData {
-  created: string
-  blocks: { tacit_block: number; height: number; hash: string; time: number; day: string; tacit_count: number; file: string }[]
+  blocks: { tacit_block: number; height: number; hash: string; time: number; tacit_count: number; file: string }[]
   total_envs: number
-  last_processed?: number
-  elapsed?: string
-  processed_heights?: number[]
   range?: [number, number]
   total_blocks?: number
-  opcodes?: Record<string, number>
 }
 
 function loadIndex(): IndexData {
   const f = resolve(OUT_DIR, 'index.json')
-  if (!existsSync(f)) return { created: new Date().toISOString(), blocks: [], total_envs: 0 }
+  if (!existsSync(f)) return { blocks: [], total_envs: 0 }
   return JSON.parse(readFileSync(f, 'utf8'))
 }
 
-function saveIndex(idxData: IndexData, h: number): void {
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+function saveIndex(idxData: IndexData): void {
   idxData.blocks.sort((a, b) => a.height - b.height)
   for (let i = 0; i < idxData.blocks.length; i++) idxData.blocks[i].tacit_block = i
   const hs = idxData.blocks.map(b => b.height)
   idxData.range = hs.length ? [Math.min(...hs), Math.max(...hs)] : [0, 0]
   idxData.total_blocks = idxData.blocks.length
   idxData.total_envs = idxData.blocks.reduce((s, b) => s + (b.tacit_count ?? 0), 0)
-  idxData.last_processed = h
-  idxData.elapsed = elapsed
-  idxData.processed_heights = [...processed].sort((a, b) => a - b)
-  idxData.opcodes = idxData.opcodes || {}
   writeFileSync(resolve(OUT_DIR, 'index.json'), JSON.stringify(idxData, null, 2) + '\n')
 }
 
 let index = loadIndex()
 if (force) {
   index.blocks = index.blocks.filter(b => b.height < resume || b.height > end)
-  index.processed_heights = (index.processed_heights || []).filter(h => h < resume || h > end)
-  index.opcodes = {}
 }
 for (const b of index.blocks) seen.add(b.height)
 for (const b of index.blocks) processed.add(b.height)
-for (const h of index.processed_heights || []) {
-  seen.add(h)
-  processed.add(h)
-}
-index.opcodes = index.opcodes || {}
 const completed = new Map<number, { result: FetchedBlock | null; error?: Error }>()
 let nextCommit = resume
+
+function inferStage(error: string): string {
+  if (error.includes('no witness') || error.includes('no envelope') || error.includes('bad magic') || error.includes('bad version')) return 'envelope'
+  if (error.includes('payload') || error.includes('opcode') || error.includes('empty')) return 'payload'
+  return 'script'
+}
+
+let prevBlockCid: CID | null = null
 
 function commitReady(): void {
   while (completed.has(nextCommit)) {
     const { result: r, error } = completed.get(nextCommit)!
     completed.delete(nextCommit)
-    last = nextCommit
     processed.add(nextCommit)
 
     if (error) {
@@ -358,7 +355,7 @@ function commitReady(): void {
     }
 
     if (!r) {
-      saveIndex(index, last)
+      saveIndex(index)
       const rate = (done / ((Date.now() - t0) / 1000)).toFixed(1)
       console.log(`[empty] #${nextCommit} no tacit txs (${done}/${heights.length}) ${rate} blk/s`)
       nextCommit++
@@ -376,27 +373,80 @@ function commitReady(): void {
       height: nextCommit,
       hash: r.hash,
       time: r.time,
-      day,
       tacit_count: r.tacit_count,
       file: `${day}/${fileName}`
     })
     seen.add(nextCommit)
 
-    for (const tx of r.txs) {
-      const op = (tx as unknown as { _tacit?: { opcode: string } })._tacit?.opcode
-      if (op) index.opcodes![op] = (index.opcodes![op] || 0) + 1
+    saveIndex(index)
+
+    // ── Per-block debug JSON ──
+    if (writeDebug && r.debug_count > 0) {
+      writeFileSync(resolve(DEBUG_DIR, `${nextCommit}-debug.json`), JSON.stringify({
+        height: nextCommit,
+        hash: r.hash,
+        time: r.time,
+        tx_count: r.tx_count,
+        debug_count: r.debug_count,
+        debug_txs: r.debug_txs.map(d => ({
+          txid: d.txid,
+          tx_index: (d as unknown as { tx_index?: number }).tx_index,
+          error: d.error,
+          stage: inferStage(d.error),
+          witness_hex: d.witness_hex
+        }))
+      }, null, 2) + '\n')
     }
 
-    saveIndex(index, last)
-
-    const opcodes: Record<string, number> = {}
-    for (const tx of r.txs) {
-      const op = (tx as unknown as { _tacit?: { opcode: string } })._tacit?.opcode || 'UNKNOWN'
-      opcodes[op] = (opcodes[op] || 0) + 1
+    // ── Per-block DAG + CAR ──
+    let dagCid = ''
+    let processedBlock: ProcessedBlock | null = null
+    if ((writeDag || writeCar) && r.tacit_count > 0) {
+      processedBlock = processBlock({
+        height: block.height,
+        hash: block.hash,
+        previousblockhash: block.previousblockhash || null,
+        time: block.time,
+        nTx: block.nTx,
+        tx: block.tx
+      }, tacitBlock, prevBlockCid)
+      if (processedBlock) {
+        prevBlockCid = processedBlock.blockCid
+        dagCid = processedBlock.blockCid.toString()
+      }
     }
-    const opSummary = Object.entries(opcodes).map(([op, n]) => `${n}x${op}`).join(',')
+
+    if (writeDag && processedBlock) {
+      const dagFileName = `dag-tacit-${tacitBlock}-${nextCommit}.json`
+      const dagSubdir = resolve(DAG_DIR, day)
+      mkdirSync(dagSubdir, { recursive: true })
+      const nodes: Record<string, unknown>[] = []
+      for (const [key, entry] of processedBlock.cids) {
+        const role = key === 'block' ? 'block' : key === 'txs' ? 'txs' : key.startsWith('tx-') ? 'tx' : key.startsWith('vin-') ? 'vin' : key.startsWith('vout-') ? 'vout' : key.startsWith('witness-') ? 'witness' : 'unknown'
+        const node = 'node' in entry ? jsonNode(entry.node) : null
+        nodes.push({ key, cid: entry.cid.toString(), bytes_hex: bytesToHex(entry.bytes), role, node })
+      }
+      writeFileSync(resolve(dagSubdir, dagFileName), JSON.stringify({
+        v: 1, height: nextCommit, time: r.time, tacit_block: tacitBlock, tacit_tx_count: processedBlock.tacitTxCount,
+        block: { cid: processedBlock.blockCid.toString(), bytes_hex: bytesToHex(processedBlock.blockBytes) },
+        nodes
+      }, null, 2) + '\n')
+    }
+
+    if (writeCar && processedBlock) {
+      const carBytes = buildBlockCarFile(processedBlock)
+      const carSubdir = resolve(CAR_DIR, day)
+      mkdirSync(carSubdir, { recursive: true })
+      const carFileName = `dag-tacit-${tacitBlock}-${nextCommit}.car`
+      writeFileSync(resolve(carSubdir, carFileName), carBytes)
+    }
+
     const rate = (done / ((Date.now() - t0) / 1000)).toFixed(1)
-    console.log(`  #${nextCommit}  ${r.tacit_count} envs  ${opSummary}  ${rate} blk/s`)
+    const parts = [`  #${nextCommit}  ${r.tacit_count} envs`]
+    if (dagCid) parts.push(`dag=${dagCid.slice(0, 12)}…`)
+    if (r.debug_count > 0 && writeDebug) parts.push(`dbg=${r.debug_count}`)
+    parts.push(`${rate} blk/s`)
+    console.log(parts.join('  '))
     nextCommit++
   }
 }
@@ -430,7 +480,7 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
   }
 }))
 
-saveIndex(index, last)
+saveIndex(index)
 const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
 if (fetchSkipped) console.log(`[skip]  ${fetchSkipped} blocks already indexed`)
 console.log(`\nDone: ${index.total_blocks} blocks, ${index.total_envs} envs, ${elapsed}s`)

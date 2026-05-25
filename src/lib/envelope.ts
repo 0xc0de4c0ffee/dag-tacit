@@ -1,43 +1,10 @@
 import { hexToBytes } from './dag-cbor.ts'
-import type { BitcoinTx, DecodePayloadResult, ExtractTacitPayloadResult } from './types.ts'
-
-const MAGIC = new Uint8Array([0x54, 0x41, 0x43, 0x49, 0x54]) // "TACIT"
-const VERSION = 0x01
-
-const OPCODES: Record<string, number> = {
-  CETCH: 0x21,
-  CXFER: 0x23,
-  T_MINT: 0x24,
-  T_BURN: 0x25,
-  T_AXFER: 0x26,
-  T_PETCH: 0x27,
-  T_PMINT: 0x28,
-  T_DEPOSIT: 0x29,
-  T_WITHDRAW: 0x2a
-}
-
-const OPCODE_NAMES: Record<number, string> = {
-  [OPCODES.CETCH]: 'CETCH',
-  [OPCODES.CXFER]: 'CXFER',
-  [OPCODES.T_MINT]: 'T_MINT',
-  [OPCODES.T_BURN]: 'T_BURN',
-  [OPCODES.T_AXFER]: 'T_AXFER',
-  [OPCODES.T_PETCH]: 'T_PETCH',
-  [OPCODES.T_PMINT]: 'T_PMINT',
-  [OPCODES.T_DEPOSIT]: 'T_DEPOSIT',
-  [OPCODES.T_WITHDRAW]: 'T_WITHDRAW'
-}
-
-const OP_0 = 0x00
-const OP_PUSHDATA1 = 0x4c
-const OP_PUSHDATA2 = 0x4d
-const OP_PUSHDATA4 = 0x4e
-const OP_1NEGATE = 0x4f
-const OP_1 = 0x51
-const OP_16 = 0x60
-const OP_IF = 0x63
-const OP_NOTIF = 0x64
-const OP_ENDIF = 0x68
+import type { BitcoinTx, DecodePayloadResult, ExtractTacitPayloadResult } from '../types.ts'
+import {
+  MAGIC, VERSION, OPCODE_NAMES,
+  OP_0, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4,
+  OP_1NEGATE, OP_1, OP_16, OP_IF, OP_NOTIF, OP_ENDIF,
+} from '../config.ts'
 
 interface ScriptOp {
   kind: 'push' | 'op'
@@ -162,12 +129,12 @@ export function decodePayload(payload: Uint8Array): DecodePayloadResult {
 }
 
 /**
- * Check if transaction has a valid Tacit envelope (full decode check per SPEC Section 4)
- * Step 1: vin[0] has second witness item
- * Step 2: Envelope decode succeeds
- * Step 3: Payload decode succeeds
+ * Extract raw Tacit envelope content from a transaction.
+ * Validates envelope structure (magic bytes, version, pushdata framing)
+ * but does NOT validate the opcode — this is the block-level check.
+ * For full opcode validation, use extractTacitPayload instead.
  */
-export function extractTacitPayload(tx: BitcoinTx): ExtractTacitPayloadResult {
+export function extractEnvelopeContent(tx: BitcoinTx): { ok: true; payload: Uint8Array } | { ok: false; error: string } {
   const w = tx.vin?.[0]?.txinwitness
   if (!w || w.length < 2) return { ok: false, error: 'no witness' }
 
@@ -196,13 +163,24 @@ export function extractTacitPayload(tx: BitcoinTx): ExtractTacitPayloadResult {
       offset += pushes[i].length
     }
 
-    const payloadResult = decodePayload(payload)
-    if (!payloadResult.ok) {
-      return { ok: false, error: `payload decode failed: ${payloadResult.error}` }
-    }
-
-    return { ok: true, payload, opcode: payloadResult.opcode }
+    return { ok: true, payload }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
   }
+}
+
+/**
+ * Full Tacit envelope decode per SPEC Section 4.
+ * Validates envelope structure AND the opcode byte.
+ */
+export function extractTacitPayload(tx: BitcoinTx): ExtractTacitPayloadResult {
+  const envelope = extractEnvelopeContent(tx)
+  if (!envelope.ok) return envelope
+
+  const payloadResult = decodePayload(envelope.payload)
+  if (!payloadResult.ok) {
+    return { ok: false, error: `payload decode failed: ${payloadResult.error}` }
+  }
+
+  return { ok: true, payload: envelope.payload, opcode: payloadResult.opcode }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import * as dagCbor from '@ipld/dag-cbor'
 import { CID } from 'multiformats/cid'
-import { btcToSatoshis, bytesToHex, encodeNode, hexToBytes, rawCid, padBytes } from '../src/dag-cbor.ts'
+import { btcToSatoshis, bytesToHex, encodeNode, hexToBytes } from '../src/lib/dag-cbor.ts'
 
 describe('dag-cbor utilities', () => {
   test('converts btc JSON numbers to satoshis per Section 9', () => {
@@ -27,24 +27,5 @@ describe('dag-cbor utilities', () => {
     expect(dagCbor.decode(bytes)).toEqual({ v: 1, n: 7 })
   })
 
-  test('rawCid creates v1 raw+identity CID for 32-byte digest', () => {
-    const bytes = hexToBytes('00'.repeat(32))
-    const cid = rawCid(bytes)
-    expect(cid).toBeInstanceOf(CID)
-    expect(cid.version).toBe(1)
-    expect(cid.code).toBe(0x55)
-    expect(cid.multihash.code).toBe(0x00)
-    expect(cid.multihash.digest.length).toBe(32)
-  })
 
-  test('padBytes pads to exact length', () => {
-    const short = new Uint8Array([0x01, 0x02])
-    const padded = padBytes(short, 4)
-    expect(padded).toEqual(new Uint8Array([0x00, 0x00, 0x01, 0x02]))
-  })
-
-  test('padBytes throws when input exceeds target length', () => {
-    const long = new Uint8Array([0x01, 0x02, 0x03])
-    expect(() => padBytes(long, 2)).toThrow('bytes too long')
-  })
 })
