@@ -70,13 +70,15 @@ if (!blks.length) {
 console.log(`Importing ${blks.length} blocks`)
 const logEvery = Math.max(1, Math.floor(blks.length / 20))
 
-let bc = 0, tc = 0, vc = 0, voc = 0, ac = 0, addrc = 0
+let bc = 0, tc = 0, vc = 0, voc = 0, ac = 0
 const t0 = Date.now()
 
-// Track per-asset mint counts for cap validation
+// Track per-asset mint counts for cap validation, and hex→id lookup
 const mintCounts = new Map<string, number>()
-for (const row of db.select({ assetId: s.assets.assetId, mintedCount: s.assets.mintedCount }).from(s.assets).all()) {
+const assetHexToId = new Map<string, number>()
+for (const row of db.select({ id: s.assets.id, assetId: s.assets.assetId, mintedCount: s.assets.mintedCount }).from(s.assets).all()) {
   mintCounts.set(row.assetId, row.mintedCount ?? 0)
+  assetHexToId.set(row.assetId, row.id)
 }
 
 db.run('BEGIN TRANSACTION')
@@ -110,7 +112,7 @@ try {
       const existing = db.select({ id: s.txs.id }).from(s.txs).where(eq(s.txs.txid, tx.txid)).get()
       if (existing) { tc++; continue }
 
-      let opcode = '', opcodeByte: number | undefined, payloadHex = '', assetId: string | null = null, n = 0
+      let opcode = '', opcodeByte: number | undefined, payloadHex = '', assetHex: string | null = null, n = 0
       let mintValid: number | null = null
       if (env.ok && env.payload) {
         opcode = env.opcode
@@ -119,26 +121,29 @@ try {
         n = tacitOutputCount(env.payload[0], env.payload)
         // asset_id derivation: SHA256(etch_txid_LE || vout_LE) per §4
         if (env.payload[0] === 0x21 || env.payload[0] === 0x27) {
-          assetId = hex(deriveAssetId(tx.txid))
+          assetHex = hex(deriveAssetId(tx.txid))
         } else {
-          assetId = env.payload.length > 33 ? hex(env.payload.slice(1, 33)) : null
+          assetHex = env.payload.length > 33 ? hex(env.payload.slice(1, 33)) : null
         }
 
         // Cap validation for T_PMINT — only for new txs
-        if (opcodeByte === 0x28 && assetId) {
-          const assetRow = mintCounts.get(assetId)
+        if (opcodeByte === 0x28 && assetHex) {
+          const assetRow = mintCounts.get(assetHex)
           if (assetRow !== undefined) {
             const assetCheck = db.select({
               cap: s.assets.capAmount, lim: s.assets.mintLimit,
-            }).from(s.assets).where(eq(s.assets.assetId, assetId)).get()
+            }).from(s.assets).where(eq(s.assets.assetId, assetHex)).get()
             if (assetCheck?.cap && assetCheck?.lim) {
               const nextMint = assetRow + 1
               mintValid = nextMint * assetCheck.lim <= assetCheck.cap ? 1 : 0
-              if (mintValid) mintCounts.set(assetId, nextMint)
+              if (mintValid) mintCounts.set(assetHex, nextMint)
             }
           }
         }
       }
+
+      // Resolve hex assetId → integer FK (may be missing for non-tacit txs)
+      let assetId: number | null = assetHex ? (assetHexToId.get(assetHex) ?? null) : null
 
       const txResult = db.insert(s.txs).values({
         txid: tx.txid, height: entry.height, index: tx.tx_index ?? 0,
@@ -171,10 +176,10 @@ try {
       for (let vo = 0; vo < tx.vout.length; vo++) {
         const o = tx.vout[vo]
         const isTacit = vo < n ? 1 : 0
-        const isCetchOrPetch = env.ok && (env.payload[0] === 0x21 || env.payload[0] === 0x27)
-        const voutAsset = isTacit && isCetchOrPetch
+        const voutAssetHex = isTacit && env.ok && (env.payload[0] === 0x21 || env.payload[0] === 0x27)
           ? hex(deriveAssetId(tx.txid))
-          : isTacit ? assetId : null
+          : isTacit ? assetHex : null
+        const voutAssetId: number | null = voutAssetHex ? (assetHexToId.get(voutAssetHex) ?? null) : null
 
         // Compute commitment C — only reliable for CETCH (variable offset after ticker)
         let commitmentC: string | null = null
@@ -191,7 +196,7 @@ try {
           value: btcSat(o.value), pubkey: o.scriptPubKey?.hex || null,
           address: o.scriptPubKey?.address || null,
           scriptType: o.scriptPubKey?.type || null,
-          isTacit, assetId: voutAsset,
+          isTacit, assetId: voutAssetId,
           commitmentC,
         }).run()
         voc++
@@ -214,23 +219,26 @@ try {
         if (asset) {
           const isNonMintable = asset.mint_authority.every(b => b === 0)
           const etchTx = db.select({ id: s.txs.id }).from(s.txs).where(eq(s.txs.txid, tx.txid)).get()
-          db.insert(s.assets).values({
+          const ins = db.insert(s.assets).values({
             assetId: hex(asset.asset_id), ticker: asset.ticker, decimals: asset.decimals,
             kind: 'cetch', isMintable: isNonMintable ? 0 : 1,
             mintAuthority: isNonMintable ? null : hex(asset.mint_authority),
             commitC: hex(asset.commitment), amountCt: hex(asset.amountCt || new Uint8Array(8)),
             etchTxId: etchTx?.id ?? txId, etchHeight: entry.height, etchTime: raw.time,
             imageUri: asset.image_uri || null,
-          }).onConflictDoNothing().run()
+          }).run()
           ac++
+          // Cache the new asset id for later lookups
+          const newId = Number(ins.lastInsertRowid)
+          assetHexToId.set(hex(asset.asset_id), newId)
+          mintCounts.set(hex(asset.asset_id), 0)
         }
-      } else if (env.ok && env.payload[0] === 0x27 && assetId) {
+      } else if (env.ok && env.payload[0] === 0x27 && assetHex) {
         const params = parseTPetchPayload(env.payload)
         if (params) {
-          const existingAsset = db.select({ assetId: s.assets.assetId }).from(s.assets).where(eq(s.assets.assetId, assetId)).get()
-          if (!existingAsset) {
-            db.insert(s.assets).values({
-              assetId, kind: 't_petch', ticker: params.ticker, decimals: params.decimals,
+          if (!assetHexToId.has(assetHex)) {
+            const ins = db.insert(s.assets).values({
+              assetId: assetHex, kind: 't_petch', ticker: params.ticker, decimals: params.decimals,
               capAmount: params.cap_amount, mintLimit: params.mint_limit,
               mintStartHeight: params.mintStartHeight || null,
               mintEndHeight: params.mintEndHeight || null,
@@ -239,16 +247,11 @@ try {
               imageUri: params.imageUri || null,
             }).run()
             ac++
+            assetHexToId.set(assetHex, Number(ins.lastInsertRowid))
           }
-          mintCounts.set(assetId, mintCounts.get(assetId) ?? 0)
+          mintCounts.set(assetHex, mintCounts.get(assetHex) ?? 0)
         }
       }
-
-      // Address index
-      const addrRows: typeof s.txAddresses.$inferInsert[] = []
-      for (const vo of tx.vout) { const a = vo.scriptPubKey?.address; if (a) addrRows.push({ txId, address: a, role: 'output' }) }
-      for (const vi of tx.vin) { const a = vi.prevout?.scriptPubKey?.address; if (a) addrRows.push({ txId, address: a, role: 'input' }) }
-      if (addrRows.length) { db.insert(s.txAddresses).values(addrRows).onConflictDoNothing().run(); addrc += addrRows.length }
     }
     if (bt) {
       console.log(`  ✓ #${entry.height} done in ${((Date.now() - bt) / 1000).toFixed(1)}s`)
@@ -256,12 +259,15 @@ try {
   }
   db.run('COMMIT')
   // Update minted counts for T_PETCH assets
-  for (const [assetId, count] of mintCounts) {
-    const a = db.select({ kind: s.assets.kind }).from(s.assets).where(eq(s.assets.assetId, assetId)).get()
-    if (a?.kind === 't_petch') {
-      db.update(s.assets).set({ mintedCount: count }).where(eq(s.assets.assetId, assetId)).run()
+  for (const [hexId, count] of mintCounts) {
+    const assetRow = assetHexToId.get(hexId)
+    if (assetRow !== undefined) {
+      const a = db.select({ kind: s.assets.kind }).from(s.assets).where(eq(s.assets.id, assetRow)).get()
+      if (a?.kind === 't_petch') {
+        db.update(s.assets).set({ mintedCount: count }).where(eq(s.assets.id, assetRow)).run()
+      }
     }
   }
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
-  console.log(`Done: ${bc} blocks, ${tc} txs, ${vc} vins, ${voc} vouts, ${ac} assets, ${addrc} address entries in ${elapsed}s → ${DB_PATH}`)
+  console.log(`Done: ${bc} blocks, ${tc} txs, ${vc} vins, ${voc} vouts, ${ac} assets in ${elapsed}s → ${DB_PATH}`)
 } catch (e) { db.run('ROLLBACK'); console.error('Import failed:', e); process.exit(1) }

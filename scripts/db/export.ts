@@ -40,7 +40,7 @@ Default: --sql`)
   // Fetch all rows using raw SQL to avoid type issues
   const fetchTable = (table: string) => db.all(sql`SELECT * FROM ${sql.identifier(table)} ORDER BY rowid`)
 
-  const tables = ['blocks', 'txs', 'vins', 'vouts', 'assets', 'tx_addresses'] as const
+  const tables = ['blocks', 'txs', 'vins', 'vouts', 'assets'] as const
   const data: Record<string, any[]> = {}
   for (const t of tables) {
     try { data[t] = fetchTable(t) } catch (e) { console.error(`  ⚠ failed to fetch table ${t}:`, e); data[t] = [] }

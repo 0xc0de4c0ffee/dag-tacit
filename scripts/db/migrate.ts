@@ -23,7 +23,7 @@ function getApplied(): Set<string> {
   return new Set<string>((j.entries || []).map((e: any) => e.tag))
 }
 
-const ALL_TABLES = ['tx_addresses', 'vouts', 'vins', 'assets', 'txs', 'blocks']
+const ALL_TABLES = ['vouts', 'vins', 'txs', 'assets', 'blocks']
 
 export function dropTables(db: Database): void {
   db.run('PRAGMA foreign_keys = OFF')

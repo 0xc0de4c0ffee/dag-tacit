@@ -25,7 +25,7 @@ scripts/
     assets-build.ts    — Build unified asset index from per-block JSON
     assets-full.ts     — Pipeline: dag -> car -> build
   db/
-    schema.ts          — Drizzle ORM schema (6 tables: cursor, blocks, assets, envelopes, commitments, tx_addresses)
+    schema.ts          — Drizzle ORM schema (5 tables: blocks, assets, txs, vins, vouts)
     client.ts          — Bun SQLite Drizzle client factory
     migrate.ts         — Apply drizzle-kit SQL migrations
     init.ts            — Create DB + run migrations
@@ -155,16 +155,15 @@ bun run build           # Build dist (minified JS + .d.ts)
 
 Local SQLite via `bun:sqlite` with Drizzle ORM. Schema declared in `scripts/db/schema.ts`. Migrations managed by `drizzle-kit`.
 
-### Schema — 6 tables mirroring the IPLD DAG-CBOR structure
+### Schema — 5 tables mirroring the IPLD DAG-CBOR structure
 
 | Table | Purpose |
 |-------|---------|
 | `blocks` | Block hash ledger for reorg detection (PK: height) |
-| `txs` | One row per Tacit-bearing tx — full decoded envelope data, opcode, asset_id, validation status, chain status |
+| `assets` | CETCH/T_PETCH asset definitions with metadata, cap tracking, mint count |
+| `txs` | One row per Tacit-bearing tx — full decoded envelope data, opcode, asset_id (FK to assets.id), validation status, mint status |
 | `vins` | One row per tx input (vin[]), with prevout reference, witness data, Tacit envelope script |
 | `vouts` | One row per tx output (vout[]), with pubkey script, value, tacit flag, commitment, spend tracking |
-| `assets` | CETCH/T_PETCH asset definitions with metadata |
-| `tx_addresses` | P2TR address index per tx (input/output roles) |
 
 ### Commands
 
@@ -174,9 +173,9 @@ bun run db:import --from 948242 --to 948247  # Import a range for testing
 bun run db:import --force             # Re-import (clear + repopulate)
 bun run db:utxo stats                 # Show DB summary stats
 bun run db:utxo envelope <txid>       # Show envelope details
-bun run db:utxo address <addr>        # Show envelopes for an address
-bun run db:utxo asset <asset_id>      # Show envelopes for an asset
-bun run db:utxo commitments <asset_id> # Show Pedersen commitments
+bun run db:utxo address <addr>        # Show txs for an address
+bun run db:utxo asset <asset_id>      # Show asset details, cap, mint status
+bun run db:utxo commitments <asset_id> # Show Pedersen commitments (vouts)
 bun run db:db:export --sql            # Export as SQL dump (for D1/browser)
 bun run db:export --json              # Export as JSON snapshot
 bun run drizzle-kit generate          # Generate new migration after schema change

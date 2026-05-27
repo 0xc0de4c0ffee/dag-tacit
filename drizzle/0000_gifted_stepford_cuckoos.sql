@@ -1,5 +1,6 @@
 CREATE TABLE `assets` (
-	`asset_id` text PRIMARY KEY NOT NULL,
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`asset_id` text NOT NULL,
 	`ticker` text NOT NULL,
 	`decimals` integer NOT NULL,
 	`kind` text NOT NULL,
@@ -19,6 +20,7 @@ CREATE TABLE `assets` (
 	FOREIGN KEY (`etch_tx_id`) REFERENCES `txs`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `assets_asset_id_unique` ON `assets` (`asset_id`);--> statement-breakpoint
 CREATE TABLE `blocks` (
 	`height` integer PRIMARY KEY NOT NULL,
 	`hash` text NOT NULL,
@@ -28,15 +30,6 @@ CREATE TABLE `blocks` (
 	`n_tx` integer DEFAULT 0
 );
 --> statement-breakpoint
-CREATE TABLE `tx_addresses` (
-	`tx_id` integer NOT NULL,
-	`address` text NOT NULL,
-	`role` text NOT NULL,
-	PRIMARY KEY(`tx_id`, `address`, `role`),
-	FOREIGN KEY (`tx_id`) REFERENCES `txs`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE INDEX `txaddr_addr_idx` ON `tx_addresses` (`address`);--> statement-breakpoint
 CREATE TABLE `txs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`txid` text NOT NULL,
@@ -48,11 +41,12 @@ CREATE TABLE `txs` (
 	`envelope_valid` integer DEFAULT 0,
 	`opcode` text,
 	`opcode_byte` integer,
-	`asset_id` text,
+	`asset_id` integer,
 	`payload_hex` text,
 	`chain_status` text DEFAULT 'confirmed',
 	`mint_valid` integer,
-	FOREIGN KEY (`height`) REFERENCES `blocks`(`height`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`height`) REFERENCES `blocks`(`height`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`asset_id`) REFERENCES `assets`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `txs_txid_unique` ON `txs` (`txid`);--> statement-breakpoint
@@ -89,12 +83,13 @@ CREATE TABLE `vouts` (
 	`address` text,
 	`script_type` text,
 	`is_tacit` integer DEFAULT 0,
-	`asset_id` text,
+	`asset_id` integer,
 	`commitment_c` text,
 	`encrypted_amount` text,
 	`spent` integer DEFAULT 0,
 	`spent_in_tx_id` integer,
-	FOREIGN KEY (`tx_id`) REFERENCES `txs`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`tx_id`) REFERENCES `txs`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`asset_id`) REFERENCES `assets`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE INDEX `vouts_tx_id_idx` ON `vouts` (`tx_id`);--> statement-breakpoint

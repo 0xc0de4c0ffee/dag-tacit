@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index, primaryKey, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import type { InferSelectModel } from 'drizzle-orm'
 
 // ── Blocks ──
@@ -11,7 +11,29 @@ export const blocks = sqliteTable('blocks', {
   nTx: integer('n_tx').default(0),
 })
 
-// ── Transactions (IPLD Tx node — §6) ──
+// ── Assets (CETCH/T_PETCH definitions) ──
+export const assets = sqliteTable('assets', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  assetId: text('asset_id').notNull().unique(),
+  ticker: text('ticker').notNull(),
+  decimals: integer('decimals').notNull(),
+  kind: text('kind').notNull(),
+  isMintable: integer('is_mintable').default(0),
+  mintAuthority: text('mint_authority'),
+  capAmount: integer('cap_amount'),
+  mintLimit: integer('mint_limit'),
+  mintStartHeight: integer('mint_start_height'),
+  mintEndHeight: integer('mint_end_height'),
+  mintedCount: integer('minted_count').default(0),
+  commitC: text('commit_c'),
+  amountCt: text('amount_ct'),
+  etchTxId: integer('etch_tx_id').notNull().references(() => txs.id),
+  etchHeight: integer('etch_height').notNull(),
+  etchTime: integer('etch_time').notNull(),
+  imageUri: text('image_uri'),
+})
+
+// ── Transactions ──
 export const txs = sqliteTable('txs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   txid: text('txid').notNull().unique(),
@@ -23,10 +45,10 @@ export const txs = sqliteTable('txs', {
   envelopeValid: integer('envelope_valid').default(0),
   opcode: text('opcode'),
   opcodeByte: integer('opcode_byte'),
-  assetId: text('asset_id'),
+  assetId: integer('asset_id').references(() => assets.id),
   payloadHex: text('payload_hex'),
   chainStatus: text('chain_status').default('confirmed'),
-  mintValid: integer('mint_valid'),              // 1=valid, 0=cap_overflow, null=N/A
+  mintValid: integer('mint_valid'),
 }, t => ({
   txidIdx: uniqueIndex('txs_txid_idx').on(t.txid),
   heightIdx: index('txs_height_idx').on(t.height),
@@ -34,7 +56,7 @@ export const txs = sqliteTable('txs', {
   opcodeIdx: index('txs_opcode_idx').on(t.opcode),
 }))
 
-// ── Transaction inputs (IPLD VinEntry — §7, one per vin[]) ──
+// ── Transaction inputs (one per vin[]) ──
 export const vins = sqliteTable('vins', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   txId: integer('tx_id').notNull().references(() => txs.id),
@@ -55,7 +77,7 @@ export const vins = sqliteTable('vins', {
   prevIdx: index('vins_prev_idx').on(t.txidPrev, t.voutPrev),
 }))
 
-// ── Transaction outputs (IPLD VoutEntry — §8, one per vout[]) ──
+// ── Transaction outputs (one per vout[]) ──
 export const vouts = sqliteTable('vouts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   txId: integer('tx_id').notNull().references(() => txs.id),
@@ -65,7 +87,7 @@ export const vouts = sqliteTable('vouts', {
   address: text('address'),
   scriptType: text('script_type'),
   isTacit: integer('is_tacit').default(0),
-  assetId: text('asset_id'),
+  assetId: integer('asset_id').references(() => assets.id),
   commitmentC: text('commitment_c'),
   encryptedAmount: text('encrypted_amount'),
   spent: integer('spent').default(0),
@@ -77,41 +99,9 @@ export const vouts = sqliteTable('vouts', {
   spentIdx: index('vouts_spent_idx').on(t.spent),
 }))
 
-// ── Assets (CETCH/T_PETCH definitions — §9) ──
-export const assets = sqliteTable('assets', {
-  assetId: text('asset_id').primaryKey(),
-  ticker: text('ticker').notNull(),
-  decimals: integer('decimals').notNull(),
-  kind: text('kind').notNull(),
-  isMintable: integer('is_mintable').default(0),
-  mintAuthority: text('mint_authority'),
-  capAmount: integer('cap_amount'),
-  mintLimit: integer('mint_limit'),
-  mintStartHeight: integer('mint_start_height'),
-  mintEndHeight: integer('mint_end_height'),
-  mintedCount: integer('minted_count').default(0),
-  commitC: text('commit_c'),
-  amountCt: text('amount_ct'),
-  etchTxId: integer('etch_tx_id').notNull().references(() => txs.id),
-  etchHeight: integer('etch_height').notNull(),
-  etchTime: integer('etch_time').notNull(),
-  imageUri: text('image_uri'),
-})
-
-// ── Address index (flat lookup, non-IPLD) ──
-export const txAddresses = sqliteTable('tx_addresses', {
-  txId: integer('tx_id').notNull().references(() => txs.id),
-  address: text('address').notNull(),
-  role: text('role').notNull(),
-}, t => ({
-  pk: primaryKey({ columns: [t.txId, t.address, t.role] }),
-  addrIdx: index('txaddr_addr_idx').on(t.address),
-}))
-
 // ── Types ──
 export type Block = InferSelectModel<typeof blocks>
+export type Asset = InferSelectModel<typeof assets>
 export type Tx = InferSelectModel<typeof txs>
 export type Vin = InferSelectModel<typeof vins>
 export type Vout = InferSelectModel<typeof vouts>
-export type Asset = InferSelectModel<typeof assets>
-export type TxAddress = InferSelectModel<typeof txAddresses>

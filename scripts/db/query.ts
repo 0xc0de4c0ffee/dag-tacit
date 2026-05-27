@@ -34,7 +34,10 @@ switch (cmd) {
     console.log(`  Fee: ${tx.fee} sat, Version: ${tx.version}, Locktime: ${tx.locktime}`)
     if (tx.envelopeValid) {
       console.log(`  Opcode: ${tx.opcode} (0x${tx.opcodeByte?.toString(16).padStart(2, '0')})`)
-      if (tx.assetId) console.log(`  Asset: ${tx.assetId.slice(0, 32)}…`)
+      if (tx.assetId) {
+        const a = db.select({ assetId: s.assets.assetId }).from(s.assets).where(eq(s.assets.id, tx.assetId)).get()
+        if (a) console.log(`  Asset: ${a.assetId.slice(0, 32)}…`)
+      }
       if (tx.payloadHex) console.log(`  Payload: ${tx.payloadHex.length / 2} B`)
       if (tx.mintValid === 1) console.log(`  Mint: VALID`)
       else if (tx.mintValid === 0) console.log(`  Mint: CAP OVERFLOW`)
@@ -59,12 +62,21 @@ switch (cmd) {
   case 'address': {
     const addr = argv[1]
     if (!addr) { console.error('Usage: address <addr>'); process.exit(1) }
-    const rows = db.select().from(s.txAddresses).where(eq(s.txAddresses.address, addr)).orderBy(s.txAddresses.txId).all()
+    const fromVouts = db.select({
+      txId: s.vouts.txId, role: sql<string>`'output'`.as('role'),
+    }).from(s.vouts).where(eq(s.vouts.address, addr)).all()
+    const fromVins = db.select({
+      txId: s.vins.txId, role: sql<string>`'input'`.as('role'),
+    }).from(s.vins).where(eq(s.vins.prevoutAddress, addr)).all()
+    const rows = [...fromVouts, ...fromVins].sort((a, b) => a.txId - b.txId)
     if (!rows.length) { console.log(`No activity for ${addr}`) }
     else {
       console.log(`\n${addr}: ${rows.length} entries`)
+      const seen = new Set<number>()
       for (const r of rows) {
-        const tx = db.select().from(s.txs).where(eq(s.txs.id, r.txId)).get()
+        if (seen.has(r.txId)) continue
+        seen.add(r.txId)
+        const tx = db.select({ txid: s.txs.txid, opcode: s.txs.opcode }).from(s.txs).where(eq(s.txs.id, r.txId)).get()
         const tag = tx?.opcode ? ` [${tx.opcode}]` : ''
         console.log(`  ${(tx?.txid || '?').slice(0, 32)}…  ${r.role}${tag}`)
       }
@@ -75,16 +87,18 @@ switch (cmd) {
   case 'asset': {
     const aid = argv[1]
     if (!aid) { console.error('Usage: asset <asset_id>'); process.exit(1) }
+    const asset = db.select({ id: s.assets.id }).from(s.assets).where(eq(s.assets.assetId, aid)).get()
+    if (!asset) { console.log(`Asset ${aid} not found`); break }
     const a = db.select({
       assetId: s.assets.assetId, ticker: s.assets.ticker, decimals: s.assets.decimals,
       kind: s.assets.kind, isMintable: s.assets.isMintable,
       mintAuthority: s.assets.mintAuthority, commitC: s.assets.commitC,
       amountCt: s.assets.amountCt, etchHeight: s.assets.etchHeight,
       etchTime: s.assets.etchTime, imageUri: s.assets.imageUri,
-      etchTxid: s.txs.txid,
       capAmount: s.assets.capAmount, mintLimit: s.assets.mintLimit,
       mintedCount: s.assets.mintedCount,
-    }).from(s.assets).innerJoin(s.txs, eq(s.assets.etchTxId, s.txs.id)).where(eq(s.assets.assetId, aid)).get()
+      etchTxid: s.txs.txid,
+    }).from(s.assets).innerJoin(s.txs, eq(s.assets.etchTxId, s.txs.id)).where(eq(s.assets.id, asset.id)).get()
     if (a) {
       console.log(`\n${a.ticker} (${aid.slice(0, 20)}…)`)
       console.log(`  Kind: ${a.kind}, Decimals: ${a.decimals}, Mintable: ${a.isMintable}`)
@@ -93,11 +107,13 @@ switch (cmd) {
       if (a.etchTxid) console.log(`  Etch TX: ${a.etchTxid.slice(0, 32)}…`)
       if (a.kind === 't_petch') {
         console.log(`  Cap: ${a.capAmount}  Mint limit: ${a.mintLimit}`)
-        console.log(`  Minted: ${a.mintedCount}  (${a.capAmount ? ((a.mintedCount ?? 0) * (a.mintLimit ?? 1) / a.capAmount * 100).toFixed(1) : '?'}% of cap)`)
-        const invalid = db.select({ c: sql<number>`COUNT(*)` }).from(s.txs).where(and(eq(s.txs.assetId, aid), eq(s.txs.mintValid, 0))).get()
+        const pct = a.capAmount ? ((a.mintedCount ?? 0) * (a.mintLimit ?? 1) / a.capAmount * 100).toFixed(1) : '?'
+        const remaining = a.capAmount ? a.capAmount - (a.mintedCount ?? 0) * (a.mintLimit ?? 1) : 0
+        console.log(`  Minted: ${a.mintedCount}  (${pct}% of cap, ${remaining} remaining)`)
+        const invalid = db.select({ c: sql<number>`COUNT(*)` }).from(s.txs).where(and(eq(s.txs.assetId, asset.id), eq(s.txs.mintValid, 0))).get()
         if (invalid?.c) console.log(`  Cap overflows: ${invalid.c}`)
       }
-      const vouts = db.select({ txid: s.txs.txid }).from(s.vouts).innerJoin(s.txs, eq(s.vouts.txId, s.txs.id)).where(eq(s.vouts.assetId, aid)).limit(5).all()
+      const vouts = db.select({ txid: s.txs.txid }).from(s.vouts).innerJoin(s.txs, eq(s.vouts.txId, s.txs.id)).where(eq(s.vouts.assetId, asset.id)).limit(5).all()
       if (vouts.length) console.log(`  Recent UTXOs: ${vouts.length}`)
     } else { console.log(`Asset ${aid} not found`); const a2 = db.select().from(s.assets).where(sql`asset_id LIKE ${aid + '%'}`).all(); if (a2.length) for (const x of a2) console.log(`  ${x.ticker}: ${x.assetId.slice(0, 20)}…`) }
     break
@@ -109,10 +125,10 @@ switch (cmd) {
     const vi = db.select({ c: sql<number>`COUNT(*)` }).from(s.vins).get()
     const vo = db.select({ c: sql<number>`COUNT(*)` }).from(s.vouts).get()
     const a = db.select({ c: sql<number>`COUNT(*)` }).from(s.assets).get()
-    const addr = db.select({ c: sql<number>`COUNT(DISTINCT ${s.txAddresses.address})` }).from(s.txAddresses).get()
+    const addrs = db.select({ c: sql<number>`COUNT(DISTINCT ${s.vouts.address})` }).from(s.vouts).get()
     const size = statSync(DB_PATH).size
     console.log(`\n${DB_PATH}  (${(size / 1024 / 1024).toFixed(1)} MB)`)
-    console.log(`  Blocks:   ${b?.c}\n  TXs:      ${t?.c}\n  Vins:     ${vi?.c}\n  Vouts:    ${vo?.c}\n  Assets:   ${a?.c}\n  Addresses: ${addr?.c}`)
+    console.log(`  Blocks:   ${b?.c}\n  TXs:      ${t?.c}\n  Vins:     ${vi?.c}\n  Vouts:    ${vo?.c}\n  Assets:   ${a?.c}\n  Addresses: ${addrs?.c}`)
     break
   }
 
