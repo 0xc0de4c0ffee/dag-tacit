@@ -1,18 +1,25 @@
 import type { BitcoinBlock, BitcoinRpcClient, BitcoinTx, RpcMethod, RpcParams } from '../types.ts'
 
-export function createBitcoinRpcClient(url: string): BitcoinRpcClient {
+export function createBitcoinRpcClient(url: string, timeoutMs = 0): BitcoinRpcClient {
   if (!url || url.includes('YOUR_KEY')) throw new Error('BITCOIN_RPC_URL not configured')
   let reqs = 0
   return async function rpc(method: RpcMethod, params: RpcParams = []): Promise<unknown> {
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', method, params, id: ++reqs })
-    })
-    if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`)
-    const d = await r.json() as { error?: { message: string }; result: unknown }
-    if (d.error) throw new Error(d.error.message)
-    return d.result
+    const ac = timeoutMs > 0 ? new AbortController() : undefined
+    const timer = ac ? setTimeout(() => ac.abort(), timeoutMs) : undefined
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method, params, id: ++reqs }),
+        signal: ac?.signal,
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`)
+      const d = await r.json() as { error?: { message: string }; result: unknown }
+      if (d.error) throw new Error(d.error.message)
+      return d.result
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
   }
 }
 

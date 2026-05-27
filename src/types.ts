@@ -160,6 +160,7 @@ export interface Asset {
   image_uri: string
   block_height: number
   time: number
+  amountCt: Uint8Array
 }
 
 /** Single operation on an asset */
@@ -170,6 +171,12 @@ export interface AssetOp {
   block_height: number
   time: number
   payload: Uint8Array
+}
+
+/** T_PETCH cap parameters */
+export interface TPetchParams {
+  cap_amount: number
+  mint_limit: number
 }
 
 /** Asset index root node */

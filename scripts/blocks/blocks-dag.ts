@@ -27,7 +27,9 @@ const force = argv.includes('--force')
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: bun run dag [options]
 
-Build DAG-CBOR nodes from fetched Tacit block artifacts.
+Build DAG-CBOR JSON files from fetched Tacit block artifacts.
+For debugging and testing only — NOT required for CAR production.
+CAR files can be built directly via: bun run fetch --car
 
 Options:
   --from <height>    Starting BTC block height (default: all)

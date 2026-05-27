@@ -51,4 +51,19 @@ export function btcToSatoshis(btc: number): number {
   return Math.max(0, Math.floor(btc * 1e8 + 0.5))
 }
 
+/**
+ * Derive asset_id from etch txid per SPEC §4:
+ * asset_id = SHA256(reveal_txid_LE || reveal_vout_LE)
+ * where reveal_txid is the wire-format (LE) txid bytes and vout is 4-byte LE.
+ * CETCH and T_PETCH both use vout = 0.
+ */
+export function deriveAssetId(txidHex: string, vout = 0): Uint8Array {
+  const txidLE = hexToBytes(txidHex).reverse()
+  const buf = new Uint8Array(36)
+  buf.set(txidLE, 0)
+  const dv = new DataView(buf.buffer)
+  dv.setUint32(32, vout, true)
+  return sha256(buf)
+}
+
 

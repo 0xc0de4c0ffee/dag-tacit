@@ -14,7 +14,8 @@ export function buildAssetNode(asset: Asset): { cid: CID; bytes: Uint8Array } {
     mint_authority: asset.mint_authority,
     image_uri: asset.image_uri,
     block_height: asset.block_height,
-    time: asset.time
+    time: asset.time,
+    amount_ct: asset.amountCt,
   }
   return encodeNode(node)
 }
@@ -26,10 +27,8 @@ export function buildAssetOpNode(op: AssetOp): { cid: CID; bytes: Uint8Array } {
     opcode: op.opcode,
     block_height: op.block_height,
     time: op.time,
-    payload: op.payload
-  }
-  if (op.asset_id) {
-    node.asset_id = op.asset_id
+    payload: op.payload,
+    asset_id: op.asset_id,
   }
   return encodeNode(node)
 }

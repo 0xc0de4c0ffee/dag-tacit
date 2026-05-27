@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url'
 import { CID } from 'multiformats/cid'
 import { loadConfig } from '../../src/config.ts'
 import { createBitcoinRpcClient, fetchVerboseBlock } from '../../src/lib/rpc.ts'
-import { extractEnvelopeContent, witnessHasTacitMagicHex } from '../../src/lib/envelope.ts'
+import { extractEnvelopeContent, decodePayload, witnessHasTacitMagicHex } from '../../src/lib/envelope.ts'
 import { bytesToHex } from '../../src/lib/dag-cbor.ts'
 import { jsonNode, utcDay } from '../../src/lib/utils.ts'
 import { processBlock } from '../../src/blocks/blocks-nodes.ts'
@@ -37,14 +37,18 @@ if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: bun run fetch [options]
 
 Fetch Bitcoin blocks via RPC, filter Tacit transactions, and store artifacts.
-Optional per-block DAG (--dag) and CAR (--car) pipeline.
+
+Outputs:
+  Raw tacit-block JSON (always):      out/tacit-blocks/
+  CAR files (with --car):             out/car/blocks/       ← RECOMMENDED
+  DAG-CBOR JSON (with --dag):         out/dag-nodes/        ← debug/testing only
 
 Options:
   --from <height>    Starting BTC block height (default: resume from index or genesis ${START_HEIGHT})
   --to <height>      Ending BTC block height (default: chain tip)
   --force            Re-fetch and overwrite existing blocks
-  --dag              Build DAG-CBOR nodes per block (writes out/dag-nodes/)
-  --car              Build CAR files per block (writes out/car/blocks/)
+  --car              Build CAR files (primary output format)
+  --dag              Build DAG-CBOR JSON files (debug/testing only)
   --debug            Write per-block debug JSON for failed txs
   -t, --threads N    Concurrency (default: 5)
   --help, -h         Show this help`)
@@ -99,6 +103,11 @@ async function fetchBlock(height: number): Promise<FetchedBlock | null> {
       candidates++
       const envelope = extractEnvelopeContent(tx)
       if (envelope.ok) {
+        // All txs passing magic + version check are stored — opcode validation
+        // is separate (debug layer), so unknown opcodes remain available for
+        // future protocol upgrades.
+        const opCheck = decodePayload(envelope.payload)
+        if (!opCheck.ok) debugTxs.push({ txid: tx.txid, error: `opcode: ${opCheck.error}`, witness_hex: witnessHex } as DebugTx)
         tacitTxs.push({
           tx_index: txIndex,
           txid: tx.txid,
@@ -143,7 +152,17 @@ async function fetchBlock(height: number): Promise<FetchedBlock | null> {
     }
     console.log(`[scan]  #${height} candidates=${candidates} tacit=${tacitTxs.length} debug=${debugTxs.length} in ${((Date.now() - tScan) / 1000).toFixed(2)}s`)
 
-    if (!tacitTxs.length) return null
+    if (!tacitTxs.length) return {
+      height,
+      hash: block.hash,
+      previousblockhash: block.previousblockhash || null,
+      time: block.time,
+      tx_count: block.nTx ?? 0,
+      tacit_count: 0,
+      debug_count: debugTxs.length,
+      txs: [],
+      debug_txs: debugTxs
+    }
 
     return {
       height,
@@ -170,14 +189,22 @@ const end = toFlag ? parseInt(toFlag) : (positional[1] ? parseInt(positional[1])
 let resume = start
 if (!start) {
   if (force) {
+    // Wipe output dir to avoid mixing old and new data
+    if (existsSync(OUT_DIR)) rmSync(OUT_DIR, { recursive: true })
+    mkdirSync(OUT_DIR, { recursive: true })
     resume = START_HEIGHT
     console.log(`--force: starting from Tacit genesis height #${START_HEIGHT}`)
   } else if (existsSync(resolve(OUT_DIR, 'index.json'))) {
-    const idx = JSON.parse(readFileSync(resolve(OUT_DIR, 'index.json'), 'utf8')) as { blocks?: { height: number }[] }
-    const heights = idx.blocks?.map(b => b.height) ?? []
-    const lastProcessed = heights.length ? Math.max(...heights) : START_HEIGHT - 1
-    resume = lastProcessed + 1
-    console.log(`Resume from #${resume} (tip: #${tip}, last: #${lastProcessed})`)
+    const idx = JSON.parse(readFileSync(resolve(OUT_DIR, 'index.json'), 'utf8')) as { blocks?: { height: number }[]; scanned_to?: number }
+    if (typeof idx.scanned_to === 'number') {
+      resume = idx.scanned_to + 1
+      console.log(`Resume from #${resume} (tip: #${tip}, scanned: #${idx.scanned_to})`)
+    } else {
+      const heights = idx.blocks?.map(b => b.height) ?? []
+      const lastProcessed = heights.length ? Math.max(...heights) : START_HEIGHT - 1
+      resume = lastProcessed + 1
+      console.log(`Resume from #${resume} (tip: #${tip}, last: #${lastProcessed})`)
+    }
   } else {
     resume = START_HEIGHT
     console.log(`Starting from Tacit genesis height #${START_HEIGHT}`)
@@ -188,20 +215,23 @@ if (!start) {
 const idxFilePath = resolve(OUT_DIR, 'index.json')
 if (existsSync(idxFilePath)) {
   const idx = JSON.parse(readFileSync(idxFilePath, 'utf8')) as IndexData
-  if (idx.blocks.length > 0) {
+  if (idx.blocks.length > 0 || typeof idx.scanned_to === 'number') {
     const reorgDepth = config.reorgDepth
-    const sorted = [...idx.blocks].sort((a, b) => a.height - b.height)
-    const lastBlock = sorted[sorted.length - 1]
-    const lastHeight = lastBlock.height
-    const checkFrom = Math.max(START_HEIGHT, lastHeight - reorgDepth + 1)
-    if (checkFrom <= lastHeight) {
-      const storedByHeight = new Map(sorted.map(b => [b.height, b]))
-      const tipHash = await rpc('getblockhash', [lastHeight]) as string
+    const checkHeight = typeof idx.scanned_to === 'number' ? idx.scanned_to : idx.blocks[idx.blocks.length - 1].height
+    const checkHash = idx.last_hash || (idx.blocks.length ? idx.blocks[idx.blocks.length - 1].hash : '')
+    if (!checkHash) {
+      console.log(`[reorg] skip: no stored hash for #${checkHeight}, fetching…`)
+      idx.last_hash = await rpc('getblockhash', [checkHeight]) as string
+    }
+    const checkFrom = Math.max(START_HEIGHT, checkHeight - reorgDepth + 1)
+    if (checkFrom <= checkHeight) {
+      const storedByHeight = new Map(idx.blocks.map(b => [b.height, b] as const))
+      const tipHash = await rpc('getblockhash', [checkHeight]) as string
 
-      if (tipHash !== lastBlock.hash) {
-        console.log(`\n[reorg] tip #${lastHeight} (tacit ${lastBlock.tacit_block}) hash mismatch — walking back`)
-        let cutoff = lastHeight
-        for (let h = lastHeight - 1; h >= checkFrom; h--) {
+      if (tipHash !== checkHash) {
+        console.log(`\n[reorg] #${checkHeight} hash mismatch — walking back`)
+        let cutoff = checkHeight
+        for (let h = checkHeight - 1; h >= checkFrom; h--) {
           const rpcHash = await rpc('getblockhash', [h]) as string
           const stored = storedByHeight.get(h)
           if (stored && stored.hash === rpcHash) {
@@ -210,7 +240,7 @@ if (existsSync(idxFilePath)) {
           }
           cutoff = h
         }
-        console.log(`[reorg] fork at #${cutoff - 1}, removing ${lastHeight - cutoff + 1} blocks from #${cutoff}`)
+        console.log(`[reorg] fork at #${cutoff - 1}, removing ${checkHeight - cutoff + 1} blocks from #${cutoff}`)
 
         const removed = idx.blocks.filter(b => b.height >= cutoff)
 
@@ -280,9 +310,13 @@ if (existsSync(idxFilePath)) {
         idx.blocks = idx.blocks.filter(b => b.height < cutoff)
         idx.total_blocks = idx.blocks.length
         idx.total_envs = idx.blocks.reduce((s, b) => s + (b.tacit_count ?? 0), 0)
+        idx.scanned_to = cutoff - 1
+        idx.last_hash = cutoff > checkFrom ? (storedByHeight.get(cutoff - 1)?.hash) : undefined
         writeFileSync(idxFilePath, JSON.stringify(idx, null, 2) + '\n')
         if (resume > cutoff) resume = cutoff
         console.log(`[reorg] reset to #${cutoff}, removed ${removed.length} tacit blocks`)
+      } else {
+        console.log(`[reorg] #${checkHeight} hash ok (no reorg)`)
       }
     }
   }
@@ -307,6 +341,8 @@ interface IndexData {
   total_envs: number
   range?: [number, number]
   total_blocks?: number
+  scanned_to?: number
+  last_hash?: string
 }
 
 function loadIndex(): IndexData {
@@ -331,6 +367,11 @@ if (force) {
 }
 for (const b of index.blocks) seen.add(b.height)
 for (const b of index.blocks) processed.add(b.height)
+// Mark all blocks up to scanned_to as seen so they are never re-fetched
+if (typeof index.scanned_to === 'number') {
+  const minScanned = Math.min(...(index.blocks.length ? index.blocks.map(b => b.height) : [index.scanned_to]))
+  for (let h = minScanned; h <= index.scanned_to; h++) seen.add(h)
+}
 const completed = new Map<number, { result: FetchedBlock | null; error?: Error }>()
 let nextCommit = resume
 
@@ -355,9 +396,18 @@ function commitReady(): void {
     }
 
     if (!r) {
-      saveIndex(index)
+      const rate = (done / ((Date.now() - t0) / 1000)).toFixed(1)
+      console.log(`[skip]  #${nextCommit} already seen (${done}/${heights.length}) ${rate} blk/s`)
+      nextCommit++
+      continue
+    }
+
+    if (r.tacit_count === 0) {
       const rate = (done / ((Date.now() - t0) / 1000)).toFixed(1)
       console.log(`[empty] #${nextCommit} no tacit txs (${done}/${heights.length}) ${rate} blk/s`)
+      index.scanned_to = nextCommit
+      index.last_hash = r.hash
+      saveIndex(index)
       nextCommit++
       continue
     }
@@ -378,10 +428,12 @@ function commitReady(): void {
     })
     seen.add(nextCommit)
 
+    index.scanned_to = nextCommit
+    index.last_hash = r.hash
     saveIndex(index)
 
-    // ── Per-block debug JSON ──
-    if (writeDebug && r.debug_count > 0) {
+    // ── Per-block debug JSON (always written when there are debug txs) ──
+    if (r.debug_count > 0) {
       writeFileSync(resolve(DEBUG_DIR, `${nextCommit}-debug.json`), JSON.stringify({
         height: nextCommit,
         hash: r.hash,
@@ -403,12 +455,12 @@ function commitReady(): void {
     let processedBlock: ProcessedBlock | null = null
     if ((writeDag || writeCar) && r.tacit_count > 0) {
       processedBlock = processBlock({
-        height: block.height,
-        hash: block.hash,
-        previousblockhash: block.previousblockhash || null,
-        time: block.time,
-        nTx: block.nTx,
-        tx: block.tx
+        height: r.height,
+        hash: r.hash,
+        previousblockhash: r.previousblockhash || null,
+        time: r.time,
+        nTx: r.tx_count,
+        tx: r.txs
       }, tacitBlock, prevBlockCid)
       if (processedBlock) {
         prevBlockCid = processedBlock.blockCid

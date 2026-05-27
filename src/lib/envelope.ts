@@ -122,7 +122,7 @@ export function decodePayload(payload: Uint8Array): DecodePayloadResult {
   const opcodeName = OPCODE_NAMES[op]
 
   if (!opcodeName) {
-    return { ok: false, error: `unknown opcode 0x${op.toString(16)}` }
+    return { ok: false, error: `unknown opcode 0x${op.toString(16).padStart(2, '0')}` }
   }
 
   return { ok: true, opcode: opcodeName }

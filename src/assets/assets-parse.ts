@@ -1,8 +1,8 @@
 import { sha256 } from '@noble/hashes/sha256'
-import { hexToBytes } from '../lib/dag-cbor.ts'
+import { hexToBytes, deriveAssetId } from '../lib/dag-cbor.ts'
 import { extractTacitPayload } from '../lib/envelope.ts'
-import { OPCODES, OPCODES_INFO } from '../config.ts'
-import type { BitcoinTx, Asset, AssetOp } from '../types.ts'
+import { OPCODES_INFO } from '../config.ts'
+import type { BitcoinTx, Asset, AssetOp, TPetchParams } from '../types.ts'
 
 /** Parse a CETCH payload into an Asset record */
 export function parseCetchPayload(
@@ -50,11 +50,8 @@ export function parseCetchPayload(
     }
   }
 
-  const etchTxid = hexToBytes(txid)
-  const payloadForHash = new Uint8Array(33)
-  payloadForHash.set(etchTxid, 0)
-  payloadForHash[32] = 0
-  const assetId = sha256(payloadForHash)
+  const etchTxid = hexToBytes(txid) // RPC display order (big-endian hex, for display only)
+  const assetId = deriveAssetId(txid) // wire format (LE bytes + 4-byte LE vout) per SPEC §4
 
   return {
     asset_id: assetId,
@@ -65,7 +62,8 @@ export function parseCetchPayload(
     mint_authority: mintAuthority,
     image_uri: imageUri,
     block_height: blockHeight,
-    time
+    time,
+    amountCt,
   }
 }
 
@@ -95,6 +93,40 @@ export function parseAssetOp(
   }
 }
 
+/** Parse a T_PETCH payload into cap/mint params */
+export function parseTPetchPayload(payload: Uint8Array): (TPetchParams & { ticker: string; decimals: number; mintStartHeight: number; mintEndHeight: number; imageUri: string }) | null {
+  if (payload.length < 1 + 1 + 1 + 8 + 8) return null
+  let offset = 1 // skip opcode
+  const tickerLen = payload[offset++]
+  if (tickerLen < 1 || tickerLen > 16 || offset + tickerLen + 1 + 8 + 8 > payload.length) return null
+  const ticker = new TextDecoder().decode(payload.slice(offset, offset + tickerLen))
+  offset += tickerLen
+  const decimals = payload[offset++]
+  if (decimals > 8) return null
+  if (offset + 16 + 4 + 4 > payload.length) return null
+  const capAmount = new DataView(payload.slice(offset, offset + 8).buffer).getBigUint64(0, true)
+  offset += 8
+  const mintLimit = new DataView(payload.slice(offset, offset + 8).buffer).getBigUint64(0, true)
+  offset += 8
+  if (capAmount <= 0 || mintLimit <= 0) return null
+  if (Number(capAmount) % Number(mintLimit) !== 0) return null
+  const mintStartHeight = new DataView(payload.slice(offset, offset + 4).buffer).getUint32(0, true)
+  offset += 4
+  const mintEndHeight = new DataView(payload.slice(offset, offset + 4).buffer).getUint32(0, true)
+  offset += 4
+  // kernel_sig(32) — skip for now; not stored in DB
+  offset += 32
+  let imageUri = ''
+  if (offset + 2 <= payload.length) {
+    const imgLen = payload[offset] | (payload[offset + 1] << 8)
+    offset += 2
+    if (imgLen > 0 && offset + imgLen <= payload.length) {
+      imageUri = new TextDecoder().decode(payload.slice(offset, offset + imgLen))
+    }
+  }
+  return { cap_amount: Number(capAmount), mint_limit: Number(mintLimit), ticker, decimals, mintStartHeight, mintEndHeight, imageUri }
+}
+
 /** Process a block's Tacit transactions and extract Assets + AssetOps */
 export function processBlockAssets(
   txs: BitcoinTx[],
@@ -113,6 +145,24 @@ export function processBlockAssets(
     if (result.opcode === OPCODES_INFO.CETCH.name) {
       const asset = parseCetchPayload(tx.txid, result.payload, blockHeight, time)
       if (asset) assets.push(asset)
+    } else if (result.opcode === OPCODES_INFO.T_PETCH.name && result.payload.length > 1) {
+      // For T_PETCH, create a minimal Asset record (no commitment/mint_authority)
+      const assetId = deriveAssetId(tx.txid)
+      const params = parseTPetchPayload(result.payload)
+      if (params) {
+        assets.push({
+          asset_id: assetId,
+          etch_txid: hexToBytes(tx.txid),
+          ticker: params.ticker,
+          decimals: params.decimals,
+          commitment: new Uint8Array(33),
+          mint_authority: new Uint8Array(32),
+          image_uri: params.imageUri || '',
+          block_height: blockHeight,
+          time,
+          amountCt: new Uint8Array(8),
+        })
+      }
     }
   }
 

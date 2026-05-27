@@ -4,6 +4,7 @@ export {
   hexToBytes,
   bytesToHex,
   btcToSatoshis,
+  deriveAssetId,
 } from './lib/dag-cbor.ts'
 
 export {
@@ -24,6 +25,7 @@ export {
 
 export {
   parseCetchPayload,
+  parseTPetchPayload,
   extractAssetId,
   parseAssetOp,
   processBlockAssets,
@@ -50,6 +52,7 @@ export {
 export {
   jsonNode,
   utcDay,
+  tacitOutputCount,
 } from './lib/utils.ts'
 
 export {
@@ -112,6 +115,7 @@ export type {
   ProcessedAssetBlock,
   Asset,
   AssetOp,
+  TPetchParams,
   AssetIndex,
   CarMeta,
   DagTacitConfig,

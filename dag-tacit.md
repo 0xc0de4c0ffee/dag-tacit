@@ -17,11 +17,11 @@ The Tacit protocol itself, including envelope layout, opcodes, payloads, and bal
 
 **Implementation pipeline.** The dag-tacit system processes Tacit-bearing Bitcoin blocks in three stages:
 
-1. **Fetch** ([`scripts/blocks/blocks-fetch.ts`](./scripts/blocks/blocks-fetch.ts)): Fetches blocks via Bitcoin RPC, filters by Tacit magic bytes (`5441434954`) and envelope structure (push5 magic + push1 version). Stores only filtered transactions with block metadata. No opcode validation at this layer.
+1. **Fetch** ([`scripts/blocks/blocks-fetch.ts`](./scripts/blocks/blocks-fetch.ts)): Fetches blocks via Bitcoin RPC, filters by Tacit magic bytes (`5441434954`) and envelope structure. Stores only filtered transactions with block metadata. No opcode validation at this layer.
 
-2. **DAG** ([`scripts/blocks/blocks-dag.ts`](./scripts/blocks/blocks-dag.ts), [`src/blocks/blocks-nodes.ts`](./src/blocks/blocks-nodes.ts)): Reads filtered artifacts, validates envelope structure (magic + version + pushdata framing). Builds DAG-CBOR nodes. No opcode validation at this layer.
+2. **DAG** ([`src/blocks/blocks-nodes.ts`](./src/blocks/blocks-nodes.ts)): Reads filtered artifacts, validates envelope structure (magic + version + pushdata framing). Builds DAG-CBOR nodes. No opcode validation at this layer.
 
-3. **Assets** ([`scripts/assets/`](./scripts/assets/), [`src/assets/`](./src/assets/)): Full opcode validation and payload parsing. Extracts asset definitions (CETCH), tracks operations, builds asset index. This is the only layer that validates opcodes.
+3. **Assets** ([`src/assets/assets-parse.ts`](./src/assets/)): Full opcode validation and payload parsing. Extracts asset definitions (CETCH, T_PETCH), tracks operations, builds asset index. This is the only layer that validates opcodes.
 
 Packaging and transport formats, including CAR files, IPFS import flows, RPC capture, and local build pipelines, are out of scope for the IPLD schema. Such layers MAY wrap these IPLD values, but MUST NOT alter the normative field sets or encoding rules defined here.
 
@@ -32,7 +32,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 | ID | Reference |
 |----|-----------|
 | TACIT-SPEC | [Tacit protocol specification](https://github.com/z0r0z/tacit/blob/main/SPEC.md) |
-| OPCODES | [Per-opcode wire format files](./opcodes/index.md) — 30 shipped + 6 drafted opcodes |
+| OPCODES | [Per-opcode wire format files](./opcodes/index.md) — 30 shipped, 23 drafted, 9 reserved |
 | CONFIG | [`src/config.ts`](./src/config.ts) — `OPCODES_INFO` with all opcode constants |
 | IPLD-DAG-CBOR | [DAG-CBOR](https://ipld.io/docs/codecs/known/dag-cbor/) |
 | IPLD-SCHEMA | [IPLD Schema](https://ipld.io/docs/schemas/) |
@@ -79,7 +79,7 @@ A Bitcoin transaction MUST be included in `Block.txs` if and only if all of the 
 | Step | Requirement | Layer |
 |------|-------------|-------|
 | 1 | `vin[0]` has a second witness item available as raw bytes (`txinwitness[1]` or `witness[1]`). | Fetch |
-| 2 | Tacit envelope decode succeeds for that witness item: `OP_0 OP_IF <magic=5B> <version=1B> <payload> OP_ENDIF`. Magic bytes MUST be `TACIT` (`0x5441434954`). Version MUST be `0x01`. | Fetch / DAG |
+| 2 | Tacit envelope decode succeeds for that witness item: `<pubkey=32B> OP_CHECKSIG OP_0 OP_IF <magic=5B> <version=1B> <payload> OP_ENDIF`. Magic bytes MUST be `TACIT` (`0x5441434954`). Version MUST be `0x01`. The 32-byte pubkey is a BIP-341 NUMS point. | Fetch / DAG |
 | 3 | Tacit payload opcode is recognized (opcode byte exists in `OPCODES_INFO`). | Assets |
 
 Implementations MUST NOT include a transaction when any check fails.
@@ -262,7 +262,7 @@ Invariants:
 
 ## Asset IPLD
 
-`Asset` represents a CETCH-deployed token with its metadata. One `Asset` node per unique token.
+`Asset` represents a CETCH-deployed token with its metadata. One `Asset` node per unique token. T_PETCH tokens use the same `asset_id` derivation but carry additional fields (`cap_amount`, `mint_limit`) not shown here — the `Asset` IPLD type covers CETCH-only metadata; T_PETCH metadata lives in the asset index layer.
 
 - **Serialization**: DAG-CBOR map.
 - **CID**: CIDv1, dag-cbor multicodec `0x71`, SHA-256 multihash.
@@ -279,12 +279,13 @@ type Asset struct {
   image_uri String
   block_height Uint
   time Uint
+  amount_ct bytes[8]
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `asset_id` | `bytes[32]` | `SHA256(etch_txid_BE \|\| 0x00)`. Canonical asset identifier. |
+| `asset_id` | `bytes[32]` | `SHA256(reveal_txid_BE \|\| vout_LE(4))` where `vout = 0` for CETCH and T_PETCH (per TACIT-SPEC §4). Canonical asset identifier. |
 | `etch_txid` | `bytes[32]` | Bitcoin txid of the reveal that created the CETCH token. |
 | `ticker` | `string` | UTF-8 ticker symbol. 1–16 characters. |
 | `decimals` | `uint` | Decimal places. MUST be ≤ 8. |
@@ -293,6 +294,7 @@ type Asset struct {
 | `image_uri` | `string` | Optional IPFS/image URI. Empty string if absent. |
 | `block_height` | `uint` | Bitcoin block height of the CETCH reveal. |
 | `time` | `uint` | Block header timestamp at CETCH reveal. |
+| `amount_ct` | `bytes[8]` | Encrypted supply commitment (8-byte Pedersen amount ciphertext). |
 
 ## AssetOp IPLD
 
@@ -368,7 +370,7 @@ If the field is missing or non-finite, the stored value MUST be `0`.
 To maximize reproducibility of CIDs:
 
 1. `Block`, `Tx`, `VinEntry`, `VoutEntry`, `RangeRoot`, `Asset`, `AssetOp`, and `AssetIndex` objects MUST use exactly the field names listed in this document.
-2. Encoders MUST NOT omit keys for those objects.
+2. Encoders MUST NOT omit keys for those objects. Nullable fields (`AssetOp.asset_id`) MUST be present with value `null` rather than omitted.
 3. Encoders MUST NOT add fields that are not listed in this document.
 4. The block index MUST contain only keys specified by the `BlockIndex` invariants.
 5. Absent or unknown data MUST use the sentinel values defined by the relevant field: zero `uint`, empty `bytes`, empty `witness` array, or null only where a nullable link or nullable integer is specified.
@@ -448,6 +450,14 @@ Decoded `Block`:
 ## Security Considerations
 
 This index is a cache of public chain data. Implementations MUST NOT treat it as authoritative for value transfer without validating against a Bitcoin full node and appropriate user approval of spends.
+
+## CAR Import/Export & Backward Flow
+
+CAR files are self-contained — every CID referenced by the root Block node is included as an entry in the same CAR. This enables:
+
+- **Import**: External CAR files can be verified by reading all entries and checking CIDs. The `dapp/src/store.ts::importCar()` function loads an external CAR into the local Helia blockstore.
+- **Export**: `dapp/src/store.ts::exportCar(height)` returns the complete CAR binary for any indexed block.
+- **Reverse resolution**: Given a CAR file, consumers can extract the root Block CID, iterate all entries, and reconstruct the raw tacit-block JSON. This enables third-party indexers to distribute verified CAR files as "trusted sources" without exposing RPC endpoints.
 
 ## Debug Metadata (Non-normative)
 

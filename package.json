@@ -15,19 +15,30 @@
     "assets:car": "bun scripts/assets/assets-car.ts",
     "assets:build": "bun scripts/assets/assets-build.ts",
     "full": "bun scripts/blocks/blocks-full.ts",
+    "db:init": "bun scripts/db/init.ts",
+    "db:import": "bun scripts/db/import.ts",
+    "db:utxo": "bun scripts/db/query.ts",
+    "db:export": "bun scripts/db/export.ts",
+    "db:migrate": "bun scripts/db/migrate.ts",
+    "db:car-export": "bun scripts/db/car-export.ts",
+    "db:car-import": "bun scripts/db/car-import.ts",
+    "db:studio": "drizzle-kit studio",
     "build": "bun build src/index.ts --outdir dist --minify --sourcemap --target bun && tsc && sed -i '' \"s/from '\\.\\/\\(.*\\)\\.ts'/from '.\\/\\1.js'/g\" dist/*.d.ts",
-    "test": "bun test",
+    "test": "bun test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
-    "@ipld/dag-cbor": "^9.2.0",
     "@ipld/car": "^5.3.0",
-    "multiformats": "^13.1.0",
-    "@noble/hashes": "^1.5.0"
+    "@ipld/dag-cbor": "^9.2.0",
+    "@libsql/client": "^0.17.3",
+    "@noble/hashes": "^1.5.0",
+    "drizzle-orm": "^0.45.2",
+    "multiformats": "^13.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.8.0"
   }
 }

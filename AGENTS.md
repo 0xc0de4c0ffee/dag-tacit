@@ -11,17 +11,12 @@
 ## Architecture
 
 ```
-opcodes/               — Per-opcode wire format docs (19 files, one per opcode)
- 0x21-cetch.md         — Each file: header → wire table → constraints → TypeScript → SPEC ref
- 0x23-cxfer.md
- ...
- 0x38-t-wrapper-attest.md
-
+opcodes/               — Per-opcode wire format docs (36 files, one per opcode)
 scripts/
   blocks/
-    fetch.ts           — Fetch Bitcoin blocks via RPC, filter Tacit txs
-    dag.ts             — Build DAG-CBOR nodes from block artifacts
-    car.ts             — Create CAR files (block/range/daily)
+    fetch.ts           — Fetch Bitcoin blocks via RPC, filter Tacit txs → raw JSON
+    dag.ts             — Build DAG-CBOR nodes from raw JSON artifacts
+    car.ts             — Create CAR files (block/range/daily) from DAG nodes
     import.ts          — Import CAR files into IPFS Kubo
     full.ts            — Pipeline: fetch → dag → car
   assets/
@@ -29,39 +24,98 @@ scripts/
     assets-car.ts      — Build per-block asset CAR files from DAG JSON
     assets-build.ts    — Build unified asset index from per-block JSON
     assets-full.ts     — Pipeline: dag -> car -> build
-  utils.ts             — Shared script helpers (flagValue, loadBlockFile)
+  db/
+    schema.ts          — Drizzle ORM schema (6 tables: cursor, blocks, assets, envelopes, commitments, tx_addresses)
+    client.ts          — Bun SQLite Drizzle client factory
+    migrate.ts         — Apply drizzle-kit SQL migrations
+    init.ts            — Create DB + run migrations
+    import.ts          — Populate DB from out/tacit-blocks/ JSON (supports --from/--to/--force)
+    query.ts           — UTXO/envelope/address query CLI (bun run db:utxo)
+    export.ts          — Export DB as SQL dump or JSON snapshot
+    drizzle/           — Auto-generated migration files (drizzle-kit generate)
+  utils.ts             — Shared CLI helpers
 
 src/
   index.ts             — Barrel export for external consumers
   types.ts             — Shared TypeScript interfaces
   config.ts            — ALL constants, opcodes, genesis height, config loader, pin config
-  assets/
-    assets-parse.ts    — Asset parsing (CETCH payload, extractAssetId, processBlockAssets)
-    assets-nodes.ts    — Asset & AssetOp DAG-CBOR node builders
-    assets-block.ts    — Per-block asset processing + CAR file builder
+  assets/              — Asset parsing + DAG-CBOR node builders
   blocks/
-    blocks-nodes.ts    — Block, Tx, VinEntry, VoutEntry builders
+    blocks-nodes.ts    — Block, Tx, VinEntry, VoutEntry builders + processBlock()
     blocks-car.ts      — Block CAR assembly, range root, block index
   lib/
-    dag-cbor.ts        — Encoding, CID, hex helpers
-    envelope.ts        — Tacit envelope detection & payload decoding
+    dag-cbor.ts        — Encoding, CID, hex helpers, btcToSatoshis
+    envelope.ts        — Tacit envelope detection (magic bytes + OP_IF frame)
     car.ts             — Generic CAR helpers (header, entry, varint, assemble)
-    pin.ts             — IPFS/Filecoin pinning services (Kubo, Lighthouse, Pinata, Custom)
+    pin.ts             — IPFS/Filecoin pinning services
     rpc.ts             — Bitcoin JSON-RPC client
     reorg.ts           — Reorg detection logic
     utils.ts           — jsonNode, utcDay
 
-tests/
-  *.test.ts            — Bun test suite
-  fixtures.test.ts     — Fetches + tests first 25 genesis blocks end-to-end
+tests/                 — Bun test suite (nodes, envelope, car, fixtures)
   fixtures/            — 25 genesis block JSON fixtures
 
 dist/                  — Build output: minified index.js + .d.ts declarations
 
 tacit-spec/            — Git submodule: github.com/z0r0z/tacit (authoritative protocol spec)
-                         The canonical opcode table lives at SPEC.md §1.1.
-                         Per-opcode wire formats at SPEC.md §§5.1–5.20.
 ```
+
+## Pipeline Architecture
+
+The system uses a **two-pass pipeline**:
+
+### Pass 1: Fetch & Filter
+Input: Bitcoin block height
+Output: Raw tacit-block JSON (`out/tacit-blocks/`)
+         CAR files (with `--car` flag, recommended)
+         DAG-CBOR JSON (with `--dag` flag, debug/testing only)
+
+```
+RPC getblock(hash, 2) → scan tx.vin[0].txinwitness[1] for "TACIT" (5441434954)
+  → extractEnvelopeContent() → OP_0 OP_IF magic(5B) version(1B) payload OP_ENDIF
+  → store only blocks with ≥1 tacit envelope
+  → JSON: { height, hash, time, tacitCount, txs: [{ txid, vin, vout }] }
+```
+
+### Pass 2: DAG-CBOR + CAR
+Input: Raw tacit-block JSON
+Output: CAR file (`out/car/`) — primary output, no DAG JSON required
+
+```
+processBlock(block, tacitBlockIndex, prevCid) → ProcessedBlock
+  → iterate tacit txs, build VinEntry/VoutEntry/Tx/Block DAG-CBOR nodes
+  → each node: dagCbor.encode() → sha256 → CIDv1 (0x71/0x12)
+  → CIDs linked via CBOR tag 42
+
+buildBlockCarFile(processed) → Uint8Array
+  → collect all CIDs, deduplicate, create CAR entries
+  → CAR = [header: {roots:[cid], version:1}] [entry_0]...[entry_N]
+  → Block node is root CID
+```
+
+CAR files are the **canonical output** format. DAG-CBOR JSON (`--dag`) is a
+debug/testing artifact that can be regenerated from raw JSON at any time.
+
+### Deterministic CIDs
+Same block data → same SHA-256 hash → same CID.
+
+## DB ↔ CAR Roundtrip
+
+```
+            processBlock() + buildBlockCarFile()
+  JSON ──────────────────────────────────────────────► CAR
+   │                                                    │
+   │ db:import                                          │ db:car-import
+   ▼                                                    ▼
+  SQLite DB ◄───────────────────────────────────────────┘
+          db:car-export (processBlock + buildBlockCarFile from DB)
+```
+
+The system has two parallel data paths that converge on the same DAG-CBOR structure:
+
+- **CAR ← JSON**: `processBlock()` + `buildBlockCarFile()` from raw tacit-block JSON
+- **CAR ← DB**: Same processBlock/buildBlockCarFile pipeline, reading block data from the SQLite DB (envelopes table has raw witness bytes)
+- **DB ← CAR**: Reverse — parse CAR file with `CarReader`, decode DAG-CBOR blocks, extract envelope/commitment data, insert into DB (uses parent CID chain for block ordering)
 
 ## Key Type Definitions
 
@@ -76,8 +130,8 @@ See `src/types.ts` for all interfaces:
 ## Schema Rules (CRITICAL)
 
 1. **`v` field**: Only on `Block` and `RangeRoot`. `Tx`, `VinEntry`, `VoutEntry` do NOT have `v`.
-2. **`hash` / `txid` / `pubkey`**: Inline `bytes` fields. `hash` and `txid` are exactly 32 bytes. `pubkey` is the raw `scriptPubKey.hex` bytes (length varies by output type). They are NOT CID links.
-3. **`witness`**: In `VinEntry`, `witness` is a CID link to a `WitnessList` array (NOT inline). Each array element is a CID to a DAG-CBOR block containing one witness item byte string.
+2. **`hash` / `txid` / `pubkey`**: Inline `bytes` fields. 32 bytes for hash/txid. NOT CID links.
+3. **`witness`**: In `VinEntry`, `witness` is a CID link to a `WitnessList` array. Each array element is a CID to a DAG-CBOR block containing one witness item byte string.
 4. **`vin` / `vout` in Tx**: CID links to arrays of individual entry CIDs.
 5. All DAG-CBOR blocks use multicodec `0x71`, CIDv1, SHA-256 `0x12`.
 
@@ -87,7 +141,53 @@ See `src/types.ts` for all interfaces:
 - Explicit return types on exported functions
 - Prefer `interface` over `type` for object shapes
 - Use `unknown` instead of `any` where possible
-- Bitcoin values in satoshis: `btcToSatoshis(btc)`
+- Bitcoin values in satoshis: `btcToSatoshis(btc)` — input must be in BTC (float)
+- Fee/value normalization: Esplora returns satoshis, RPC returns BTC. Detect: `val > 1e6 → val / 1e8`
+
+## Testing
+
+```bash
+bun test                # Run all dag-tacit tests (118 tests, scoped to tests/*.test.ts)
+bun run build           # Build dist (minified JS + .d.ts)
+```
+
+## Database (SQLite + Drizzle ORM)
+
+Local SQLite via `bun:sqlite` with Drizzle ORM. Schema declared in `scripts/db/schema.ts`. Migrations managed by `drizzle-kit`.
+
+### Schema — 6 tables mirroring the IPLD DAG-CBOR structure
+
+| Table | Purpose |
+|-------|---------|
+| `blocks` | Block hash ledger for reorg detection (PK: height) |
+| `txs` | One row per Tacit-bearing tx — full decoded envelope data, opcode, asset_id, validation status, chain status |
+| `vins` | One row per tx input (vin[]), with prevout reference, witness data, Tacit envelope script |
+| `vouts` | One row per tx output (vout[]), with pubkey script, value, tacit flag, commitment, spend tracking |
+| `assets` | CETCH/T_PETCH asset definitions with metadata |
+| `tx_addresses` | P2TR address index per tx (input/output roles) |
+
+### Commands
+
+```bash
+bun run db:import                     # Import all blocks into DB
+bun run db:import --from 948242 --to 948247  # Import a range for testing
+bun run db:import --force             # Re-import (clear + repopulate)
+bun run db:utxo stats                 # Show DB summary stats
+bun run db:utxo envelope <txid>       # Show envelope details
+bun run db:utxo address <addr>        # Show envelopes for an address
+bun run db:utxo asset <asset_id>      # Show envelopes for an asset
+bun run db:utxo commitments <asset_id> # Show Pedersen commitments
+bun run db:db:export --sql            # Export as SQL dump (for D1/browser)
+bun run db:export --json              # Export as JSON snapshot
+bun run drizzle-kit generate          # Generate new migration after schema change
+bun run db:migrate                    # Apply pending migrations
+```
+
+### Replication
+
+- **Browser**: SQL.js WASM loads the SQL dump (`out/dag-tacit-export.sql`)
+- **D1**: Same SQL dump feeds `wrangler d1 execute`
+- **Schema is D1-compatible** — SQLite dialect, no PostgreSQL-specific features
 
 ## Common Tasks
 
@@ -103,12 +203,6 @@ See `src/types.ts` for all interfaces:
 3. Update `dag-tacit.md` field tables + `opcodes/` wire format files
 4. Update tests in `tests/nodes.test.ts` + `tests/fixtures.test.ts`
 
-### Add a script
-1. Create `scripts/<name>.ts` with shebang `#!/usr/bin/env bun`
-2. Add entry to `package.json` scripts
-3. Export any testable functions
-4. Add `--help`/`-h` support with usage text
-
 ### Sync with tacit-spec submodule
 1. `git submodule update --remote tacit-spec`
 2. Recheck `opcodes/` files against `tacit-spec/SPEC.md` wire format sections
@@ -116,37 +210,26 @@ See `src/types.ts` for all interfaces:
 4. Update any changed wire formats in `opcodes/`
 5. Update `src/config.ts` OPCODES/OPCODE_NAMES if new opcodes are added
 
-## Testing
-
-```bash
-bun test              # Run all tests
-bun run typecheck     # TypeScript type checking
-bun run build         # Build dist (minified JS + .d.ts)
-```
-
 ## IPFS Verification
 
-After importing, verify gateway traversal:
+After importing via CLI, verify gateway traversal:
 
 ```bash
-# Import a block
 bun run import --from 948242 --to 948242
-
-# Verify paths
 curl http://localhost:8080/ipfs/<root>/txs/0/vin/0/witness
 curl http://localhost:8080/ipfs/<root>/txs/0/vin/0/witness/0
 ```
 
 ## Chain Watch / Debug Logs
 
-The `fetch` and `dag` scripts generate **debug metadata** for transactions that pass the Tacit magic-bytes check but fail deeper validation (malformed envelope, unknown opcode, bad version, etc.). These are NOT included in DAG-CBOR nodes — they are JSON-only metadata for chain security monitoring.
+The `fetch` and `dag` scripts generate **debug metadata** for transactions that pass the Tacit magic-bytes check but fail deeper validation. These are NOT included in DAG-CBOR nodes — they are JSON-only metadata for chain security monitoring.
 
 - **Per-block JSON**: `out/debug/<height>-debug.json`
 - **Append-only log**: `out/debug/debug.log`
 - **Fields**: `txid`, `error` (why validation failed), `witness_hex`
 
-This helps detect forks, bad transactions, or protocol-level attacks without polluting the canonical IPLD index.
-
 ## Troubleshooting
 
-- **Path not traversable**: Check that array fields (`witness`, `vin`, `vout`, `txs`) are CID links to array nodes, not inline arrays.
+- **CID mismatch**: check that `normalizeTx` isn't mutating fields used by `processBlock`
+- **Path not traversable**: array fields (`witness`, `vin`, `vout`, `txs`) must be CID links to array nodes
+- **Fee off by 8 orders**: Esplora returns satoshis, RPC returns BTC — normalize in `normalizeTx`
