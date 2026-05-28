@@ -23,7 +23,7 @@
     "db:car-export": "bun scripts/db/car-export.ts",
     "db:car-import": "bun scripts/db/car-import.ts",
     "db:studio": "drizzle-kit studio",
-    "build": "bun build src/index.ts --outdir dist --minify --sourcemap --target bun && tsc && sed -i '' \"s/from '\\.\\/\\(.*\\)\\.ts'/from '.\\/\\1.js'/g\" dist/*.d.ts",
+    "build": "bun build src/index.ts --outdir dist --minify --sourcemap --target bun && tsc && for f in dist/*.d.ts; do [ -f \"$f\" ] && sed -i.bak \"s/from '\\.\\/\\(.*\\)\\.ts'/from '.\\/\\1.js'/g\" \"$f\" && rm -f \"$f.bak\"; done",
     "test": "bun test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build"

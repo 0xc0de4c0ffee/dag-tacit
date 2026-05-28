@@ -1,10 +1,15 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'fs'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
 import * as dagCbor from '@ipld/dag-cbor'
 import { CID } from 'multiformats/cid'
 import { btcToSatoshis, bytesToHex, encodeNode, hexToBytes, deriveAssetId } from '../src/lib/dag-cbor.ts'
 import { tacitOutputCount } from '../src/lib/utils.ts'
 import { parseTPetchPayload } from '../src/assets/assets-parse.ts'
 import { verifyCommitment, verifyBlindingNonZero, verifyCapDivisible, verifyBurnAmount, verifyKernelSig, verifyPayload, computeBlockChecksum } from '../src/lib/verify.ts'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 describe('dag-cbor utilities', () => {
   test('converts btc JSON numbers to satoshis per Section 9', () => {
@@ -103,9 +108,9 @@ describe('tacitOutputCount', () => {
 
 describe('parseTPetchPayload', () => {
   test('parses FAIR T_PETCH payload', () => {
-    // Real FAIR T_PETCH payload from block 948488
-    const hex = '27044641495200406f400100000000640000000000000000000000000000003b0062616679626569636c6c37346a3764327669353379326f7976646a7061666270766572707236636e7566326e756b767a6a7a377a756d796e616a69'
-    const r = parseTPetchPayload(hexToBytes(hex))
+    // Real FAIR T_PETCH payload (hex) from block 948488, saved in fixtures
+    const f = JSON.parse(readFileSync(resolve(__dirname, 'fixtures', 'TPETCH-FAIR-948488.json'), 'utf8'))
+    const r = parseTPetchPayload(hexToBytes(f.payload))
     expect(r).not.toBeNull()
     expect(r!.ticker).toBe('FAIR')
     expect(r!.decimals).toBe(0)
