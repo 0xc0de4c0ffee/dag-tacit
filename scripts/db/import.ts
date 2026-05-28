@@ -311,5 +311,5 @@ try {
     }
   }
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
-  console.log(`Done: ${bc} blocks, ${tc} txs, ${vc} vins, ${voc} vouts, ${ac} assets in ${elapsed}s → ${DB_PATH}`)
+  console.log(`Done: ${bc} blocks, ${tc} txs, ${vc} vins, ${voc} vouts, ${ac} assets in ${elapsed}s → ${outDir === resolve(ROOT, 'out', 'sqlite') ? 'out/sqlite/dag-tacit.sqlite' : DB_PATH}`)
 } catch (e) { db.run('ROLLBACK'); console.error('Import failed:', e); process.exit(1) }
