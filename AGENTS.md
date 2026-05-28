@@ -148,7 +148,7 @@ See `src/types.ts` for all interfaces:
 ## Testing
 
 ```bash
-bun test                # Run all dag-tacit tests (162 tests, scoped to tests/*.test.ts)
+bun test tests/*.test.ts     # Run all dag-tacit tests (162 tests, scoped to tests/*.test.ts)
 bun run build           # Build dist (minified JS + .d.ts)
 ```
 

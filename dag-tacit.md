@@ -32,7 +32,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 | ID | Reference |
 |----|-----------|
 | TACIT-SPEC | [Tacit protocol specification](https://github.com/z0r0z/tacit/blob/main/SPEC.md) |
-| OPCODES | [Per-opcode wire format files](./opcodes/index.md) — 30 shipped, 23 drafted, 9 reserved |
+| OPCODES | [Per-opcode wire format files](./opcodes/index.md) — 30 shipped, 28 drafted, 9 reserved |
 | CONFIG | [`src/config.ts`](./src/config.ts) — `OPCODES_INFO` with all opcode constants |
 | IPLD-DAG-CBOR | [DAG-CBOR](https://ipld.io/docs/codecs/known/dag-cbor/) |
 | IPLD-SCHEMA | [IPLD Schema](https://ipld.io/docs/schemas/) |

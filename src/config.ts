@@ -89,6 +89,13 @@ export const OPCODES_INFO: Record<string, OpcodeInfo> = {
   T_PREAUTH_BID:     { value: 0x5B, name: 'T_PREAUTH_BID',     status: 'shipped', source: 'SPEC-PREAUTH-BID-AMENDMENT.md §5.7.11' },
   T_PREAUTH_BID_VAR: { value: 0x5C, name: 'T_PREAUTH_BID_VAR', status: 'shipped', source: 'SPEC-PREAUTH-BID-VAR-AMENDMENT.md §5.7.12' },
 
+  // ── Bridge opcodes (tentative, declared in dapp but not yet in spec table) ──
+  T_BRIDGE_DEPOSIT:  { value: 0x60, name: 'T_BRIDGE_DEPOSIT',  status: 'drafted', source: 'tacit-spec/dapp + worker' },
+  T_BRIDGE_BURN:     { value: 0x61, name: 'T_BRIDGE_BURN',     status: 'drafted', source: 'tacit-spec/dapp + worker' },
+  T_BRIDGE_ROTATE:   { value: 0x62, name: 'T_BRIDGE_ROTATE',   status: 'drafted', source: 'tacit-spec/dapp + worker' },
+  T_BRIDGE_EXPORT:   { value: 0x63, name: 'T_BRIDGE_EXPORT',   status: 'drafted', source: 'tacit-spec/dapp + worker' },
+  T_BRIDGE_IMPORT:   { value: 0x64, name: 'T_BRIDGE_IMPORT',   status: 'drafted', source: 'tacit-spec/dapp + worker' },
+
   // ── Drafted governance opcodes ──
   T_GOV_PROPOSAL:      { value: 0x50, name: 'T_GOV_PROPOSAL',      status: 'drafted', source: 'SPEC-GOVERNANCE-AMENDMENT.md' },
   T_GOV_VOTE:          { value: 0x51, name: 'T_GOV_VOTE',          status: 'drafted', source: 'SPEC-GOVERNANCE-AMENDMENT.md' },
