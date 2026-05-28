@@ -114,8 +114,7 @@ export function parseTPetchPayload(payload: Uint8Array): (TPetchParams & { ticke
   offset += 4
   const mintEndHeight = new DataView(payload.slice(offset, offset + 4).buffer).getUint32(0, true)
   offset += 4
-  // kernel_sig(32) — skip for now; not stored in DB
-  offset += 32
+  // image_uri (optional, no kernel_sig in T_PETCH)
   let imageUri = ''
   if (offset + 2 <= payload.length) {
     const imgLen = payload[offset] | (payload[offset + 1] << 8)

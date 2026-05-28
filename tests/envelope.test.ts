@@ -28,6 +28,12 @@ describe('Tacit envelope inclusion rules', () => {
     expect(extractTacitPayload({ vin: [] } as BitcoinTx).ok).toBe(false)
   })
 
+  test('decodePayload rejects unknown opcode with 2-digit hex', () => {
+    const dp = decodePayload(new Uint8Array([0x03]))
+    expect(dp.ok).toBe(false)
+    if (!dp.ok) expect(dp.error).toBe('unknown opcode 0x03')
+  })
+
   test('accepts all known TACIT opcodes', () => {
     for (const [key, info] of Object.entries(OPCODES_INFO)) {
       const hex = info.value.toString(16).padStart(2, '0')
