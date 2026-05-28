@@ -109,6 +109,7 @@ type Block struct {
   time Uint
   txs &TxList
   v Uint
+  checksum bytes[32]
 }
 
 type TxList [&Tx]
@@ -124,6 +125,7 @@ type TxList [&Tx]
 | `time` | `uint` | Block header time in seconds since Unix epoch. |
 | `txs` | `CID` | CID of a DAG-CBOR array of `Tx` CIDs in Bitcoin tx order. |
 | `v` | `uint` | Schema version; MUST be `1`. |
+| `checksum` | `bytes[32]` | SHA256 chain checksum: `SHA256(prev_checksum \|\| SHA256(txs_canonical_json))`. Genesis uses 32 zero bytes as prev. Links each block's tacit tx set into a verifiable chain. |
 
 Invariants:
 
@@ -370,7 +372,7 @@ If the field is missing or non-finite, the stored value MUST be `0`.
 To maximize reproducibility of CIDs:
 
 1. `Block`, `Tx`, `VinEntry`, `VoutEntry`, `RangeRoot`, `Asset`, `AssetOp`, and `AssetIndex` objects MUST use exactly the field names listed in this document.
-2. Encoders MUST NOT omit keys for those objects. Nullable fields (`AssetOp.asset_id`) MUST be present with value `null` rather than omitted.
+2. Encoders MUST NOT omit keys for those objects. Nullable fields (`Block.parent`, `AssetOp.asset_id`) MUST be present with value `null` rather than omitted.
 3. Encoders MUST NOT add fields that are not listed in this document.
 4. The block index MUST contain only keys specified by the `BlockIndex` invariants.
 5. Absent or unknown data MUST use the sentinel values defined by the relevant field: zero `uint`, empty `bytes`, empty `witness` array, or null only where a nullable link or nullable integer is specified.
@@ -402,7 +404,8 @@ Decoded `Block`:
   "tx": 2,
   "time": 1778117538,
   "txs": "bafyreifxobwsdldoqnziiff6jezsxv633hyhysczet3qiyw77acjjpo5fq",
-  "v": 1
+  "v": 1,
+  "checksum": "bafyreian6pf2z5qxfx5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5q"
 }
 ```
 
@@ -434,7 +437,8 @@ Decoded `Block`:
   "tx": 1,
   "time": 1778120681,
   "txs": "bafyreibr3rqeom32xvtpedchqilo7fz2utyagvgqelyxywpe6nqsams6dm",
-  "v": 1
+  "v": 1,
+  "checksum": "bafyreian6pf2z5qxfx5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5k5q"
 }
 ```
 

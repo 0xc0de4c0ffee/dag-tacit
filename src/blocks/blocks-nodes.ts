@@ -1,8 +1,9 @@
 import { CID } from 'multiformats/cid'
-import { encodeNode, link, hexToBytes, btcToSatoshis } from '../lib/dag-cbor.ts'
-import { extractEnvelopeContent, hasTacitEnvelope } from '../lib/envelope.ts'
+import { encodeNode, link, hexToBytes, btcToSatoshis, bytesToHex } from '../lib/dag-cbor.ts'
+import { extractTacitPayload, hasTacitEnvelope } from '../lib/envelope.ts'
 import { SCHEMA_VERSION } from '../config.ts'
-import type { BitcoinBlock, BitcoinVin, BitcoinVout, VinEntry, VoutEntry, Tx, Block, ProcessedBlock, CidMap } from '../types.ts'
+import { computeBlockChecksum, verifyPayload } from '../lib/verify.ts'
+import type { BitcoinBlock, BitcoinVin, BitcoinVout, VinEntry, VoutEntry, Tx, Block, ProcessedBlock, CidMap, VerifyResult } from '../types.ts'
 
 /**
  * Build a VinEntry node (SPEC Section 7)
@@ -52,7 +53,7 @@ export function buildTxNode(tx: { txid: string; fee?: number; version?: number; 
 /**
  * Build a Block node (SPEC Section 5)
  */
-export function buildBlockNode(block: BitcoinBlock, tacitBlockIndex: number, prevCid: CID | null, txsCid: CID, tacitTxCount: number): Block {
+export function buildBlockNode(block: BitcoinBlock, tacitBlockIndex: number, prevCid: CID | null, txsCid: CID, tacitTxCount: number, checksum: Uint8Array): Block {
   return {
     height: block.height,
     hash: hexToBytes(block.hash),
@@ -61,26 +62,41 @@ export function buildBlockNode(block: BitcoinBlock, tacitBlockIndex: number, pre
     tx: tacitTxCount,
     time: block.time,
     txs: link(txsCid),
-    v: SCHEMA_VERSION
+    v: SCHEMA_VERSION,
+    checksum
   }
 }
 
 /**
  * Process a Bitcoin block and build all DAG nodes
+ *
+ * @param prevChecksum - 32-byte checksum from the previous block (null for genesis)
+ * @returns ProcessedBlock with verification results attached
  */
-export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevBlockCid: CID | null): ProcessedBlock | null {
-  const tacitTxs: { tx: typeof block.tx[0]; txIndex: number; payload: Uint8Array }[] = []
+export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevBlockCid: CID | null, prevChecksum?: Uint8Array | null): ProcessedBlock | null {
+  const tacitTxs: { tx: typeof block.tx[0]; txIndex: number; payload: Uint8Array; verifyResult: VerifyResult }[] = []
   for (let i = 0; i < block.tx.length; i++) {
     const tx = block.tx[i]
     const w = tx.vin?.[0]?.txinwitness
     if (!w || !hasTacitEnvelope(w)) continue
-    const envelope = extractEnvelopeContent(tx)
+    const envelope = extractTacitPayload(tx)
     if (envelope.ok) {
-      tacitTxs.push({ tx, txIndex: typeof tx.tx_index === 'number' ? tx.tx_index : i, payload: envelope.payload })
+      const verifyResult = verifyPayload(envelope.opcode, envelope.payload, tx.txid, block.height)
+      tacitTxs.push({ tx, txIndex: typeof tx.tx_index === 'number' ? tx.tx_index : i, payload: envelope.payload, verifyResult })
     }
   }
 
   if (tacitTxs.length === 0) return null
+
+  // Build canonical JSON of tacit txs for checksum computation
+  const txsJSON = JSON.stringify(tacitTxs.map(t => ({
+    txid: t.tx.txid,
+    index: t.txIndex,
+    fee: t.tx.fee ?? 0,
+    payload: bytesToHex(t.payload),
+    verify: t.verifyResult,
+  })))
+  const checksum = computeBlockChecksum(prevChecksum ?? null, txsJSON)
 
   const cids: CidMap = new Map()
   const txCids: CID[] = []
@@ -134,7 +150,7 @@ export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevB
 
 
   // Build Block node
-  const blockNode = buildBlockNode(block, tacitBlockIndex, prevBlockCid, txsCid, tacitTxs.length)
+  const blockNode = buildBlockNode(block, tacitBlockIndex, prevBlockCid, txsCid, tacitTxs.length, checksum)
   const { cid: blockCid, bytes: blockBytes } = encodeNode(blockNode)
   cids.set('block', { cid: blockCid, bytes: blockBytes, node: blockNode })
 
@@ -142,6 +158,8 @@ export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevB
     blockCid,
     blockBytes,
     tacitTxCount: tacitTxs.length,
-    cids
+    cids,
+    checksum,
+    txVerifyResults: tacitTxs.map(t => t.verifyResult),
   }
 }

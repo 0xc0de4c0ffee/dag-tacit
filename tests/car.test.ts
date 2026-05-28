@@ -70,8 +70,8 @@ describe('range root, block index, and CAR', () => {
     const decoded = dagCbor.decode(rootBlock!.bytes) as Record<string, unknown>
     const blockEntry = a!.cids.get('block')!
     expect('node' in blockEntry).toBe(true)
-    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v'])
-    expect(new Set(Object.keys(decoded))).toEqual(new Set(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v']))
+    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v', 'checksum'])
+    expect(new Set(Object.keys(decoded))).toEqual(new Set(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v', 'checksum']))
     expect(decoded.block).toBe(4)
     expect((decoded.parent as CID).toString()).toBe(prev!.blockCid.toString())
     expect(decoded.height).toBe(10)

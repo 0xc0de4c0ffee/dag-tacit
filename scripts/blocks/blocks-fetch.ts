@@ -382,6 +382,7 @@ function inferStage(error: string): string {
 }
 
 let prevBlockCid: CID | null = null
+let prevChecksum: Uint8Array | null = null
 
 function commitReady(): void {
   while (completed.has(nextCommit)) {
@@ -461,9 +462,10 @@ function commitReady(): void {
         time: r.time,
         nTx: r.tx_count,
         tx: r.txs
-      }, tacitBlock, prevBlockCid)
+      }, tacitBlock, prevBlockCid, prevChecksum)
       if (processedBlock) {
         prevBlockCid = processedBlock.blockCid
+        prevChecksum = processedBlock.checksum
         dagCid = processedBlock.blockCid.toString()
       }
     }

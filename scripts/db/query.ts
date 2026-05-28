@@ -110,7 +110,20 @@ switch (cmd) {
         const pct = a.capAmount ? ((a.mintedCount ?? 0) * (a.mintLimit ?? 1) / a.capAmount * 100).toFixed(1) : '?'
         const remaining = a.capAmount ? a.capAmount - (a.mintedCount ?? 0) * (a.mintLimit ?? 1) : 0
         console.log(`  Minted: ${a.mintedCount}  (${pct}% of cap, ${remaining} remaining)`)
+        if (a.etchTime) console.log(`  Mint start: ${new Date((a.etchTime + 600) * 1000).toISOString().slice(0, 19)} (etch block)`)
+        if (remaining <= 0 && a.mintedCount && a.mintedCount > 0) {
+          const last = db.select({ t: s.txs.height }).from(s.txs).where(
+            and(eq(s.txs.assetId, asset.id), eq(s.txs.mintValid, 1))
+          ).orderBy(s.txs.id, 'desc').limit(1).get()
+          if (last) {
+            const lastBlock = db.select({ time: s.blocks.time }).from(s.blocks).where(eq(s.blocks.height, last.t)).get()
+            if (lastBlock) console.log(`  Mint filled: ${new Date(lastBlock.time * 1000).toISOString().slice(0, 19)}`)
+          }
+        }
         const invalid = db.select({ c: sql<number>`COUNT(*)` }).from(s.txs).where(and(eq(s.txs.assetId, asset.id), eq(s.txs.mintValid, 0))).get()
+        if (invalid?.c) console.log(`  Cap overflows: ${invalid.c}`)
+      }
+      const vouts = db.select({ txid: s.txs.txid }).from(s.vouts).innerJoin(s.txs, eq(s.vouts.txId, s.txs.id)).where(eq(s.vouts.assetId, asset.id)).limit(5).all()
         if (invalid?.c) console.log(`  Cap overflows: ${invalid.c}`)
       }
       const vouts = db.select({ txid: s.txs.txid }).from(s.vouts).innerJoin(s.txs, eq(s.vouts.txId, s.txs.id)).where(eq(s.vouts.assetId, asset.id)).limit(5).all()

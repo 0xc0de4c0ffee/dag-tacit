@@ -60,11 +60,14 @@ describe('DAG node builders', () => {
     const result = processBlock(fixtureBlock(), 0, null)
     expect(result).not.toBeNull()
     expect(result!.tacitTxCount).toBe(1)
+    expect(result!.checksum).toBeInstanceOf(Uint8Array)
+    expect(result!.checksum.length).toBe(32)
+    expect(result!.txVerifyResults).toHaveLength(1)
     const blockEntry = result!.cids.get('block')!
     expect('node' in blockEntry).toBe(true)
-    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v'])
+    if ('node' in blockEntry) expect(Object.keys(blockEntry.node as object)).toEqual(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v', 'checksum'])
     const block = dagCbor.decode(result!.cids.get('block')!.bytes) as Record<string, unknown>
-    expect(new Set(Object.keys(block))).toEqual(new Set(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v']))
+    expect(new Set(Object.keys(block))).toEqual(new Set(['height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v', 'checksum']))
     expect(block.v).toBe(1)
     expect(block.block).toBe(0)
     expect(block.parent).toBeNull()

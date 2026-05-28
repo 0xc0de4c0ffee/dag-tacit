@@ -143,6 +143,7 @@ export interface Block {
   time: number
   txs: Link
   v: number
+  checksum: Uint8Array
 }
 
 // ============================================================================
@@ -232,11 +233,20 @@ export interface EncodedNodeWithValue extends EncodedNode {
 
 export type CidMap = Map<string, EncodedNode | EncodedNodeWithValue>
 
+export interface VerifyResult {
+  commitmentValid: boolean | null
+  commitmentError: string | null
+  issuerSigValid: boolean | null
+  issuerSigError: string | null
+}
+
 export interface ProcessedBlock {
   blockCid: CID
   blockBytes: Uint8Array
   tacitTxCount: number
   cids: CidMap
+  checksum: Uint8Array
+  txVerifyResults: VerifyResult[]
 }
 
 export interface CarMeta {

@@ -56,6 +56,14 @@ export {
 } from './lib/utils.ts'
 
 export {
+  computeBlockChecksum,
+  verifyCommitment,
+  verifySchnorrSig,
+  verifyMintSig,
+  verifyPayload,
+} from './lib/verify.ts'
+
+export {
   SCHEMA_VERSION,
   TACIT_GENESIS_HEIGHT,
   MAGIC,
@@ -123,4 +131,5 @@ export type {
   RpcMethod,
   RpcParams,
   PinServiceConfig,
+  VerifyResult,
 } from './types.ts'

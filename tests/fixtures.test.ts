@@ -153,7 +153,7 @@ describe('nodes across 25 blocks', () => {
       expect('node' in blockEntry).toBe(true)
       if ('node' in blockEntry) {
         expect(Object.keys(blockEntry.node as object)).toEqual([
-          'height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v'
+          'height', 'hash', 'parent', 'block', 'tx', 'time', 'txs', 'v', 'checksum'
         ])
       }
 
