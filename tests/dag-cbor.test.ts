@@ -103,13 +103,9 @@ describe('tacitOutputCount', () => {
 
 describe('parseTPetchPayload', () => {
   test('parses FAIR T_PETCH payload', () => {
-    // Real FAIR payload from extractTacitPayload at block 948488
-    const { extractTacitPayload } = require('../src/lib/envelope.ts')
-    const f = require('fs').readFileSync('out/tacit-blocks/2026-05-08/dag-tacit-92-948488.json', 'utf8')
-    const d = JSON.parse(f)
-    const env = extractTacitPayload(d.txs[0])
-    expect(env.ok).toBe(true)
-    const r = parseTPetchPayload(env.payload)
+    // Real FAIR T_PETCH payload from block 948488
+    const hex = '27044641495200406f400100000000640000000000000000000000000000003b0062616679626569636c6c37346a3764327669353379326f7976646a7061666270766572707236636e7566326e756b767a6a7a377a756d796e616a69'
+    const r = parseTPetchPayload(hexToBytes(hex))
     expect(r).not.toBeNull()
     expect(r!.ticker).toBe('FAIR')
     expect(r!.decimals).toBe(0)
