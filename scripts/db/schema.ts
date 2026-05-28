@@ -47,6 +47,12 @@ export const txs = sqliteTable('txs', {
   payloadHex: text('payload_hex'),
   chainStatus: text('chain_status').default('confirmed'),
   mintValid: integer('mint_valid'),
+  commitmentValid: integer('commitment_valid'),
+  commitmentError: text('commitment_error'),
+  issuerSigValid: integer('issuer_sig_valid'),
+  issuerSigError: text('issuer_sig_error'),
+  burnValid: integer('burn_valid'),
+  blindingValid: integer('blinding_valid'),
 }, t => ({
   txidIdx: uniqueIndex('txs_txid_idx').on(t.txid),
   heightIdx: index('txs_height_idx').on(t.height),

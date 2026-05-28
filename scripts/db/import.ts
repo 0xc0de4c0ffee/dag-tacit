@@ -9,6 +9,7 @@ import { extractTacitPayload } from '../../src/lib/envelope.ts'
 import { parseCetchPayload, parseTPetchPayload } from '../../src/assets/assets-parse.ts'
 import { hexToBytes, deriveAssetId } from '../../src/lib/dag-cbor.ts'
 import { tacitOutputCount } from '../../src/lib/utils.ts'
+import { verifyPayload } from '../../src/lib/verify.ts'
 import type { BitcoinTx } from '../../src/types.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -114,6 +115,9 @@ try {
 
       let opcode = '', opcodeByte: number | undefined, payloadHex = '', assetHex: string | null = null, n = 0
       let mintValid: number | null = null
+      let commitmentValid: number | null = null, commitmentError: string | null = null
+      let issuerSigValid: number | null = null, issuerSigError: string | null = null
+      let burnValid: number | null = null, blindingValid: number | null = null
       if (env.ok && env.payload) {
         opcode = env.opcode
         opcodeByte = env.payload[0]
@@ -125,6 +129,15 @@ try {
         } else {
           assetHex = env.payload.length > 33 ? hex(env.payload.slice(1, 33)) : null
         }
+
+        // Cryptographic validation via verifyPayload
+        const vr = verifyPayload(opcode, env.payload, tx.txid, entry.height)
+        if (vr.commitmentValid !== null) commitmentValid = vr.commitmentValid ? 1 : 0
+        commitmentError = vr.commitmentError
+        if (vr.issuerSigValid !== null) issuerSigValid = vr.issuerSigValid ? 1 : 0
+        issuerSigError = vr.issuerSigError
+        if (vr.burnValid !== null) burnValid = vr.burnValid ? 1 : 0
+        if (vr.blindingValid !== null) blindingValid = vr.blindingValid ? 1 : 0
 
         // Cap validation for T_PMINT — only for new txs
         if (opcodeByte === 0x28 && assetHex) {
@@ -149,6 +162,8 @@ try {
         txid: tx.txid, height: entry.height, index: tx.tx_index ?? 0,
         version: tx.version ?? 2, locktime: tx.locktime ?? 0, fee,
         envelopeValid: env.ok ? 1 : 0, opcode, opcodeByte, assetId, payloadHex, mintValid,
+        commitmentValid, commitmentError, issuerSigValid, issuerSigError,
+        burnValid, blindingValid,
       }).run()
       const txId = Number(txResult.lastInsertRowid)
       tc++
