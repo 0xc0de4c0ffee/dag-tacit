@@ -131,6 +131,7 @@ export interface Tx {
   locktime: number
   vin: Link
   vout: Link
+  valid: boolean
 }
 
 /** Block per SPEC Section 5 */
@@ -238,6 +239,8 @@ export interface VerifyResult {
   commitmentError: string | null
   issuerSigValid: boolean | null
   issuerSigError: string | null
+  burnValid: boolean | null
+  blindingValid: boolean | null
 }
 
 export interface ProcessedBlock {

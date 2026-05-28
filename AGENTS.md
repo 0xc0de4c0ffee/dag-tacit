@@ -126,6 +126,7 @@ See `src/types.ts` for all interfaces:
 - `Asset`, `AssetOp`, `AssetIndex` — Asset indexer schemas
 - `ProcessedBlock`, `CidMap` — Internal builder types
 - `RangeRoot`, `BlockIndex` — SPEC Sections 11-12
+- `VerifyResult` — Cryptographic validation results per tx
 
 ## Schema Rules (CRITICAL)
 
@@ -147,7 +148,7 @@ See `src/types.ts` for all interfaces:
 ## Testing
 
 ```bash
-bun test                # Run all dag-tacit tests (118 tests, scoped to tests/*.test.ts)
+bun test                # Run all dag-tacit tests (162 tests, scoped to tests/*.test.ts)
 bun run build           # Build dist (minified JS + .d.ts)
 ```
 
@@ -157,13 +158,13 @@ Local SQLite via `bun:sqlite` with Drizzle ORM. Schema declared in `scripts/db/s
 
 ### Schema — 5 tables mirroring the IPLD DAG-CBOR structure
 
-| Table | Purpose |
-|-------|---------|
-| `blocks` | Block hash ledger for reorg detection (PK: height) |
-| `assets` | CETCH/T_PETCH asset definitions with metadata, cap tracking, mint count |
-| `txs` | One row per Tacit-bearing tx — full decoded envelope data, opcode, asset_id (FK to assets.id), validation status, mint status |
-| `vins` | One row per tx input (vin[]), with prevout reference, witness data, Tacit envelope script |
-| `vouts` | One row per tx output (vout[]), with pubkey script, value, tacit flag, commitment, spend tracking |
+| Table | Columns | PK | FKs |
+|-------|---------|-----|-----|
+| `blocks` | 6 | height | — |
+| `assets` | 16 | auto-increment id | etchTxId → txs.id |
+| `txs` | 14 | auto-increment id | height → blocks.height, assetId → assets.id |
+| `vins` | 13 | auto-increment id | txId → txs.id |
+| `vouts` | 13 | auto-increment id | txId → txs.id, assetId → assets.id |
 
 ### Commands
 
@@ -194,7 +195,14 @@ bun run db:migrate                    # Apply pending migrations
 1. Update `OPCODES` and `OPCODE_NAMES` in `src/config.ts`
 2. Create `opcodes/<hex>-<name>.md` with wire table, constraints, TypeScript interface
 3. Add test case in `tests/envelope.test.ts`
-4. If adding payload structure parsing, add decode function to `src/lib/envelope.ts`
+4. If adding payload structure parsing, add decode function to `src/lib/envelope.ts` and validation in `src/lib/verify.ts`
+
+## Update an opcode from drafted → shipped
+1. Change status in `src/config.ts` `OPCODES_INFO`
+2. Update `opcodes/index.md` status table (counts and hex ranges)
+3. Add `tacitOutputCount` case in `src/lib/utils.ts`
+4. Add `verifyPayload` case in `src/lib/verify.ts`
+5. The canonical spec status table is `tacit-spec/SPEC.md §1.1`
 
 ### Change node schema
 1. Update interface in `src/types.ts`

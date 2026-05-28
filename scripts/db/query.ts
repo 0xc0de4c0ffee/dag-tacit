@@ -93,12 +93,13 @@ switch (cmd) {
       assetId: s.assets.assetId, ticker: s.assets.ticker, decimals: s.assets.decimals,
       kind: s.assets.kind, isMintable: s.assets.isMintable,
       mintAuthority: s.assets.mintAuthority, commitC: s.assets.commitC,
-      amountCt: s.assets.amountCt, etchHeight: s.assets.etchHeight,
-      etchTime: s.assets.etchTime, imageUri: s.assets.imageUri,
+      amountCt: s.assets.amountCt, imageUri: s.assets.imageUri,
       capAmount: s.assets.capAmount, mintLimit: s.assets.mintLimit,
       mintedCount: s.assets.mintedCount,
       etchTxid: s.txs.txid,
-    }).from(s.assets).innerJoin(s.txs, eq(s.assets.etchTxId, s.txs.id)).where(eq(s.assets.id, asset.id)).get()
+      etchHeight: s.txs.height,
+      etchTime: s.blocks.time,
+    }).from(s.assets).innerJoin(s.txs, eq(s.assets.etchTxId, s.txs.id)).innerJoin(s.blocks, eq(s.txs.height, s.blocks.height)).where(eq(s.assets.id, asset.id)).get()
     if (a) {
       console.log(`\n${a.ticker} (${aid.slice(0, 20)}…)`)
       console.log(`  Kind: ${a.kind}, Decimals: ${a.decimals}, Mintable: ${a.isMintable}`)
@@ -124,9 +125,7 @@ switch (cmd) {
         if (invalid?.c) console.log(`  Cap overflows: ${invalid.c}`)
       }
       const vouts = db.select({ txid: s.txs.txid }).from(s.vouts).innerJoin(s.txs, eq(s.vouts.txId, s.txs.id)).where(eq(s.vouts.assetId, asset.id)).limit(5).all()
-        if (invalid?.c) console.log(`  Cap overflows: ${invalid.c}`)
-      }
-      const vouts = db.select({ txid: s.txs.txid }).from(s.vouts).innerJoin(s.txs, eq(s.vouts.txId, s.txs.id)).where(eq(s.vouts.assetId, asset.id)).limit(5).all()
+      if (vouts.length) console.log(`  Recent UTXOs: ${vouts.length}`)
       if (vouts.length) console.log(`  Recent UTXOs: ${vouts.length}`)
     } else { console.log(`Asset ${aid} not found`); const a2 = db.select().from(s.assets).where(sql`asset_id LIKE ${aid + '%'}`).all(); if (a2.length) for (const x of a2) console.log(`  ${x.ticker}: ${x.assetId.slice(0, 20)}…`) }
     break

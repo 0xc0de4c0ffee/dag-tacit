@@ -149,6 +149,7 @@ type Tx struct {
   version Uint
   vin &VinList
   vout &VoutList
+  valid bool
 }
 
 type VinList [&VinEntry]
@@ -164,6 +165,7 @@ type VoutList [&VoutEntry]
 | `version` | `uint` | Transaction `version`. |
 | `vin` | `CID` | CID of DAG-CBOR array of `VinEntry` CIDs in `vin[]` order. |
 | `vout` | `CID` | CID of DAG-CBOR array of `VoutEntry` CIDs in `vout[]` order. |
+| `valid` | `bool` | Cryptographic validity: `false` if commitment or signature checks fail, `true` otherwise (unchecked opcodes are treated as valid). |
 
 ## VinEntry IPLD
 
@@ -459,8 +461,8 @@ This index is a cache of public chain data. Implementations MUST NOT treat it as
 
 CAR files are self-contained — every CID referenced by the root Block node is included as an entry in the same CAR. This enables:
 
-- **Import**: External CAR files can be verified by reading all entries and checking CIDs. The `dapp/src/store.ts::importCar()` function loads an external CAR into the local Helia blockstore.
-- **Export**: `dapp/src/store.ts::exportCar(height)` returns the complete CAR binary for any indexed block.
+- **Import**: External CAR files can be verified by reading all entries and checking CIDs against the IPLD schema.
+- **Export**: Any CAR file writer can produce dag-tacit-compatible CARs using the IPLD node builders in `src/`.
 - **Reverse resolution**: Given a CAR file, consumers can extract the root Block CID, iterate all entries, and reconstruct the raw tacit-block JSON. This enables third-party indexers to distribute verified CAR files as "trusted sources" without exposing RPC endpoints.
 
 ## Debug Metadata (Non-normative)

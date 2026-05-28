@@ -164,10 +164,7 @@ try {
           prevout: v.prevout?.scriptPubKey?.hex || null,
           prevoutAddress: v.prevout?.scriptPubKey?.address || null,
           sig: v.scriptSig?.hex || null,
-          witnessCount: v.txinwitness?.length ?? 0,
-          witness0: v.txinwitness?.[0] || null,
           witness1: v.txinwitness?.[1] || null,
-          witness2: v.txinwitness?.[2] || null,
         }).run()
         vc++
       }
@@ -175,19 +172,61 @@ try {
       // Vouts — one row per output
       for (let vo = 0; vo < tx.vout.length; vo++) {
         const o = tx.vout[vo]
-        const isTacit = vo < n ? 1 : 0
+        // T_AXFER_VAR (0x37) uses interleaved vout layout: vout[0]=recipient, vout[1]=BTC payment,
+        // vout[2]=maker change, vout[3]=OP_RETURN. Only vout[0] and vout[2] are tacit.
+        const isAxferVar = env.ok && env.payload[0] === 0x37
+        const isTacit = isAxferVar ? (vo === 0 || vo === 2 ? 1 : 0) : (vo < n ? 1 : 0)
         const voutAssetHex = isTacit && env.ok && (env.payload[0] === 0x21 || env.payload[0] === 0x27)
           ? hex(deriveAssetId(tx.txid))
           : isTacit ? assetHex : null
         const voutAssetId: number | null = voutAssetHex ? (assetHexToId.get(voutAssetHex) ?? null) : null
 
-        // Compute commitment C — only reliable for CETCH (variable offset after ticker)
+        // Compute commitment C and encryptedAmount — per-opcode variable offsets
         let commitmentC: string | null = null
-        if (isTacit && env.ok && env.payload[0] === 0x21 && env.payload.length > 3) {
-          const cl = env.payload[1]
-          const commOff = 1 + 1 + cl + 1
-          if (commOff + 33 <= env.payload.length) {
-            commitmentC = hex(env.payload.slice(commOff, commOff + 33))
+        let encryptedAmount: string | null = null
+        if (isTacit && env.ok) {
+          const op = env.payload[0]
+          if (op === 0x21 && env.payload.length > 3) {
+            // CETCH: after ticker_len(1) + ticker(N) + decimals(1)
+            const cl = env.payload[1]
+            const commOff = 1 + 1 + cl + 1
+            if (commOff + 33 + 8 <= env.payload.length) {
+              commitmentC = hex(env.payload.slice(commOff, commOff + 33))
+              encryptedAmount = hex(env.payload.slice(commOff + 33, commOff + 41))
+            }
+          } else if (op === 0x24 || op === 0x28) {
+            // T_MINT / T_PMINT: asset_id(32) + etch_txid(32) + commitmentC(33) + amountCt(8)
+            if (env.payload.length >= 1 + 32 + 32 + 33 + 8) {
+              commitmentC = hex(env.payload.slice(65, 98))
+              encryptedAmount = hex(env.payload.slice(98, 106))
+            }
+          } else if ((op === 0x23 || op === 0x22 || op === 0x26) && vo < n) {
+            // CXFER / CXFER_BPP / T_AXFER: per-output pairs after header
+            // Header: asset_id(32) + [asset_input_count(1)] + kernel_sig(64) + N(1)
+            const headerLen = (op === 0x26 ? 1 + 32 + 1 + 64 + 1 : 1 + 32 + 64 + 1)
+            const pairOff = headerLen + vo * (33 + 8)
+            if (pairOff + 33 + 8 <= env.payload.length) {
+              commitmentC = hex(env.payload.slice(pairOff, pairOff + 33))
+              encryptedAmount = hex(env.payload.slice(pairOff + 33, pairOff + 41))
+            }
+          } else if (op === 0x25 && vo < n) {
+            // T_BURN: asset_id(32) + burned_amount(8) + kernel_sig(64) + N(1)
+            const pairOff = 1 + 32 + 8 + 64 + 1 + vo * (33 + 8)
+            if (pairOff + 33 + 8 <= env.payload.length) {
+              commitmentC = hex(env.payload.slice(pairOff, pairOff + 33))
+              encryptedAmount = hex(env.payload.slice(pairOff + 33, pairOff + 41))
+            }
+          } else if (op === 0x37) {
+            // T_AXFER_VAR: N=2 fixed, interleaved vout layout. Pairs map to
+            // vout[0] (pair 0) and vout[2] (pair 1); vout[1] and vout[3] are not tacit.
+            const pairIndex = vo === 2 ? 1 : vo
+            if (pairIndex < 2 && env.payload.length > 1 + 32 + 1 + 1) {
+              const pairOff = 1 + 32 + 1 + 1 + pairIndex * (33 + 8)
+              if (pairOff + 33 + 8 <= env.payload.length) {
+                commitmentC = hex(env.payload.slice(pairOff, pairOff + 33))
+                encryptedAmount = hex(env.payload.slice(pairOff + 33, pairOff + 41))
+              }
+            }
           }
         }
 
@@ -198,6 +237,7 @@ try {
           scriptType: o.scriptPubKey?.type || null,
           isTacit, assetId: voutAssetId,
           commitmentC,
+          encryptedAmount,
         }).run()
         voc++
       }
@@ -224,12 +264,14 @@ try {
             kind: 'cetch', isMintable: isNonMintable ? 0 : 1,
             mintAuthority: isNonMintable ? null : hex(asset.mint_authority),
             commitC: hex(asset.commitment), amountCt: hex(asset.amountCt || new Uint8Array(8)),
-            etchTxId: etchTx?.id ?? txId, etchHeight: entry.height, etchTime: raw.time,
+            etchTxId: etchTx?.id ?? txId,
             imageUri: asset.image_uri || null,
           }).run()
           ac++
           // Cache the new asset id for later lookups
           const newId = Number(ins.lastInsertRowid)
+          // Backfill txs.assetId FK for the CETCH etch tx (was null at insert time)
+          db.update(s.txs).set({ assetId: newId }).where(eq(s.txs.txid, tx.txid)).run()
           assetHexToId.set(hex(asset.asset_id), newId)
           mintCounts.set(hex(asset.asset_id), 0)
         }
@@ -243,7 +285,7 @@ try {
               mintStartHeight: params.mintStartHeight || null,
               mintEndHeight: params.mintEndHeight || null,
               mintedCount: 0,
-              etchTxId: txId, etchHeight: entry.height, etchTime: raw.time,
+              etchTxId: txId,
               imageUri: params.imageUri || null,
             }).run()
             ac++

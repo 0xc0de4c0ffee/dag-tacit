@@ -2,7 +2,7 @@
 out/
 dist/
 node_modules/
-#drizzle/
+drizzle/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

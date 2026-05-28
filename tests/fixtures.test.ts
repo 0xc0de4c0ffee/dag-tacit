@@ -271,4 +271,36 @@ describe('car across 25 blocks', () => {
     expect(decoded.to).toBe(GENESIS + BLOCK_COUNT - 1)
     expect(decoded.blocks).toBe(VALID_COUNT)
   })
+
+  test('JSON → CAR roundtrip: all genesis blocks survive encode/decode', async () => {
+    const { CarReader } = await import('@ipld/car')
+    for (let i = 0; i < VALID_COUNT; i++) {
+      const processed = VALID_PROCESSED[i]
+      const carBytes = buildBlockCarFile(processed)
+      const reader = await CarReader.fromBytes(carBytes)
+      const roots = await reader.getRoots()
+      expect(roots).toHaveLength(1)
+      expect(roots[0].toString()).toBe(processed.blockCid.toString())
+
+      // Verify every CID in the processed block is present in the CAR
+      for (const [key, { cid }] of processed.cids) {
+        const entry = await reader.get(cid)
+        expect(entry).toBeDefined()
+      }
+    }
+  })
+
+  test('multi-block CAR roundtrip: all valid blocks in one CAR', async () => {
+    const { CarReader } = await import('@ipld/car')
+    if (VALID_COUNT < 2) return
+    const carBytes = buildCarFile(VALID_PROCESSED)
+    const reader = await CarReader.fromBytes(carBytes)
+    const roots = await reader.getRoots()
+    expect(roots).toHaveLength(1)
+    const rootBlock = await reader.get(roots[0])
+    expect(rootBlock).toBeDefined()
+    const root = dagCbor.decode(rootBlock!.bytes) as Record<string, unknown>
+    expect(root.blocks).toBe(VALID_COUNT)
+    expect(root.from).toBe(GENESIS)
+  })
 })

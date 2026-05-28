@@ -28,15 +28,13 @@ export const assets = sqliteTable('assets', {
   commitC: text('commit_c'),
   amountCt: text('amount_ct'),
   etchTxId: integer('etch_tx_id').notNull().references(() => txs.id),
-  etchHeight: integer('etch_height').notNull(),
-  etchTime: integer('etch_time').notNull(),
   imageUri: text('image_uri'),
 })
 
 // ── Transactions ──
 export const txs = sqliteTable('txs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  txid: text('txid').notNull().unique(),
+  txid: text('txid').notNull(),
   height: integer('height').notNull().references(() => blocks.height),
   index: integer('index').notNull(),
   version: integer('version').default(2),
@@ -68,7 +66,6 @@ export const vins = sqliteTable('vins', {
   prevout: text('prevout'),
   prevoutAddress: text('prevout_address'),
   sig: text('sig'),
-  witnessCount: integer('witness_count').default(0),
   witness0: text('witness_0'),
   witness1: text('witness_1'),
   witness2: text('witness_2'),

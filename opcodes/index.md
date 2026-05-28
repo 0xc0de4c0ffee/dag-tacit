@@ -61,9 +61,9 @@ The canonical opcode table in [`tacit-spec/SPEC.md §1.1`](../tacit-spec/SPEC.md
 | Status | Count | Key hex ranges |
 |--------|-------|----------------|
 | ✅ **Shipped** | 30 | `0x21`–`0x28`, `0x37`–`0x38`, `0x43`–`0x47`, `0x49`–`0x4C`, `0x4F`, `0x57`–`0x5C` |
-| 📝 **Drafted** | 16 | `0x2D`–`0x36`, `0x39`–`0x3E`, `0x50`–`0x56` |
-| 🔒 **Reserved** | 6 | `0x3F`–`0x42`, `0x48`, `0x4D`–`0x4E`, `0x5D`–`0x5E` |
-| ⬜ **Free** | 159 | `0x5F`–`0xFF` |
+| 📝 **Drafted** | 23 | `0x2D`–`0x36`, `0x39`–`0x3E`, `0x50`–`0x56` |
+| 🔒 **Reserved** | 9 | `0x3F`–`0x42`, `0x48`, `0x4D`–`0x4E`, `0x5D`–`0x5E` |
+| ⬜ **Free** | 155 | `0x5F`–`0xFF` |
 
 > Each opcode file in this directory contains: wire format table → constraints → TypeScript interface → decode function stub, referencing the authoritative [`tacit-spec/SPEC.md`](../tacit-spec/SPEC.md).
 >

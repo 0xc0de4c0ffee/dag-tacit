@@ -38,7 +38,7 @@ export function buildVoutEntry(vout: BitcoinVout): VoutEntry {
 /**
  * Build a Tx node (SPEC Section 6)
  */
-export function buildTxNode(tx: { txid: string; fee?: number; version?: number; locktime?: number }, txIndex: number, vinArrayCid: CID, voutArrayCid: CID): Tx {
+export function buildTxNode(tx: { txid: string; fee?: number; version?: number; locktime?: number }, txIndex: number, vinArrayCid: CID, voutArrayCid: CID, valid: boolean): Tx {
   return {
     index: txIndex,
     txid: hexToBytes(tx.txid),
@@ -46,7 +46,8 @@ export function buildTxNode(tx: { txid: string; fee?: number; version?: number; 
     version: tx.version || 0,
     locktime: tx.locktime || 0,
     vin: link(vinArrayCid),
-    vout: link(voutArrayCid)
+    vout: link(voutArrayCid),
+    valid
   }
 }
 
@@ -101,7 +102,7 @@ export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevB
   const cids: CidMap = new Map()
   const txCids: CID[] = []
 
-  for (const { tx, txIndex } of tacitTxs) {
+  for (const { tx, txIndex, verifyResult } of tacitTxs) {
     // Build individual vin entries and collect their CIDs
     const vinEntryCids: CID[] = []
     for (let i = 0; i < tx.vin.length; i++) {
@@ -136,12 +137,17 @@ export function processBlock(block: BitcoinBlock, tacitBlockIndex: number, prevB
     const { cid: voutArrayCid, bytes: voutArrayBytes } = encodeNode(voutEntryCids)
     cids.set(`vout-array-${tx.txid}`, { cid: voutArrayCid, bytes: voutArrayBytes })
 
-    // Build Tx node
-    const txNode = buildTxNode(tx, txIndex, vinArrayCid, voutArrayCid)
+    // Build Tx node — valid only if ALL verification checks pass
+    const txValid = !(
+      verifyResult.commitmentValid === false ||
+      verifyResult.issuerSigValid === false ||
+      verifyResult.burnValid === false ||
+      verifyResult.blindingValid === false
+    )
+    const txNode = buildTxNode(tx, txIndex, vinArrayCid, voutArrayCid, txValid)
     const { cid: txCid, bytes: txBytes } = encodeNode(txNode)
     cids.set(`tx-${tx.txid}`, { cid: txCid, bytes: txBytes, node: txNode })
     txCids.push(txCid)
-
   }
 
   // Build transactions array
