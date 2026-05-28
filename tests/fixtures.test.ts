@@ -34,23 +34,31 @@ async function ensureFixtures(): Promise<number[]> {
     }
   }
 
-  const config = loadConfig()
-  const url = config.bitcoinRpcUrl
-  if (!url || url.includes('YOUR_KEY')) {
-    console.warn('[fixtures] BITCOIN_RPC_URL not configured — skipping fetch')
-    return []
-  }
-
-  const rpc = createBitcoinRpcClient(url)
+  // Check what's already cached on disk
   const available: number[] = []
-
   for (let i = 0; i < BLOCK_COUNT; i++) {
     const height = GENESIS + i
     const out = resolve(FIXTURE_DIR, `block-${height}.json`)
     if (existsSync(out)) {
       available.push(height)
-      continue
     }
+  }
+  if (available.length === BLOCK_COUNT) return available
+
+  // Try fetching missing blocks via RPC
+  const config = loadConfig()
+  const url = config.bitcoinRpcUrl
+  if (!url || url.includes('YOUR_KEY')) {
+    console.warn(`[fixtures] BITCOIN_RPC_URL not configured — ${available.length}/${BLOCK_COUNT} cached`)
+    return available
+  }
+
+  const rpc = createBitcoinRpcClient(url)
+
+  for (let i = 0; i < BLOCK_COUNT; i++) {
+    const height = GENESIS + i
+    const out = resolve(FIXTURE_DIR, `block-${height}.json`)
+    if (existsSync(out)) continue
     try {
       const block = await fetchVerboseBlock(rpc, height)
       const raw: BitcoinBlock = {
@@ -101,10 +109,6 @@ const VALID_COUNT = VALID_PROCESSED.length
 // ---------------------------------------------------------------------------
 describe('fixture availability', () => {
   test('all 25 genesis blocks present', () => {
-    if (AVAILABLE.length < BLOCK_COUNT) {
-      console.warn(`Skipping: only ${AVAILABLE.length}/${BLOCK_COUNT} fixtures available (set BITCOIN_RPC_URL to fetch)`)
-      return
-    }
     expect(AVAILABLE).toHaveLength(BLOCK_COUNT)
   })
 })
