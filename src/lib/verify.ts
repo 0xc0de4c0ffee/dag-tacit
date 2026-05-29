@@ -114,7 +114,7 @@ export function verifyPayload(opcode: string, payload: Uint8Array, txid: string,
   if (payload.length < 1) return r
 
   switch (opcode) {
-    case 'CETCH': {
+    case 'CETCH': case 'T_CETCH': {
       // opcode(1) || ticker_len(1) || ticker(N) || decimals(1) || commitment(33) || ...
       let off = 1
       if (off >= payload.length) break
@@ -126,7 +126,7 @@ export function verifyPayload(opcode: string, payload: Uint8Array, txid: string,
       break
     }
 
-    case 'CXFER': case 'T_CXFER_BPP': {
+    case 'CXFER': case 'T_CXFER': case 'T_CXFER_BPP': {
       // opcode(1) || asset_id(32) || kernel_sig(64) || N(1) || [commitment(33) || amount_ct(8)]×N || rp_len(2) || rp
       if (payload.length < 1 + 32 + 64 + 1) break
       r.commitmentValid = true

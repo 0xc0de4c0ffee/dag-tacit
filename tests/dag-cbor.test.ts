@@ -7,6 +7,7 @@ import { CID } from 'multiformats/cid'
 import { btcToSatoshis, bytesToHex, encodeNode, hexToBytes, deriveAssetId } from '../src/lib/dag-cbor.ts'
 import { tacitOutputCount } from '../src/lib/utils.ts'
 import { parseTPetchPayload } from '../src/assets/assets-parse.ts'
+import { extractTacitPayload } from '../src/lib/envelope.ts'
 import { verifyCommitment, verifyBlindingNonZero, verifyCapDivisible, verifyBurnAmount, verifyKernelSig, verifyPayload, computeBlockChecksum } from '../src/lib/verify.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -107,10 +108,11 @@ describe('tacitOutputCount', () => {
 })
 
 describe('parseTPetchPayload', () => {
-  test('parses FAIR T_PETCH payload', () => {
-    // Real FAIR T_PETCH payload (hex) from block 948488, saved in fixtures
-    const f = JSON.parse(readFileSync(resolve(__dirname, 'fixtures', 'TPETCH-FAIR-948488.json'), 'utf8'))
-    const r = parseTPetchPayload(hexToBytes(f.payload))
+  test('parses FAIR T_PETCH payload from block 948488', () => {
+    const block = JSON.parse(readFileSync(resolve(__dirname, 'fixtures', 'fixture-948488.json'), 'utf8'))
+    const env = extractTacitPayload(block.tx[0])
+    expect(env.ok).toBe(true)
+    const r = parseTPetchPayload((env as { ok: true; payload: Uint8Array }).payload)
     expect(r).not.toBeNull()
     expect(r!.ticker).toBe('FAIR')
     expect(r!.decimals).toBe(0)

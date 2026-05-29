@@ -6,11 +6,13 @@ import * as dagCbor from '@ipld/dag-cbor'
 import { CID } from 'multiformats/cid'
 import { CarReader } from '@ipld/car'
 import { loadConfig } from '../src/config.ts'
+import { OPCODE_NAMES } from '../src/config.ts'
 import { createBitcoinRpcClient, fetchVerboseBlock } from '../src/lib/rpc.ts'
 import { extractEnvelopeContent, extractTacitPayload, hasTacitEnvelope } from '../src/lib/envelope.ts'
 import { processBlock, buildVinEntry, buildVoutEntry } from '../src/blocks/blocks-nodes.ts'
 import { buildBlockCarFile, buildCarFile, buildBlockIndex, buildRangeRoot } from '../src/blocks/blocks-car.ts'
 import { encodeNode, hexToBytes } from '../src/lib/dag-cbor.ts'
+import { verifyPayload } from '../src/lib/verify.ts'
 import type { BitcoinBlock, ProcessedBlock } from '../src/types.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -311,4 +313,49 @@ describe('car across 25 blocks', () => {
     expect(root.blocks).toBe(VALID_COUNT)
     expect(root.from).toBe(GENESIS)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Additional fixture blocks (outside genesis range) — per-opcode tests
+// ---------------------------------------------------------------------------
+const EXTRA_FIXTURES = [
+  { height: 948314, file: 'fixture-948314.json', hasOpcodes: ['T_CETCH', 'T_CXFER', 'T_MINT'] },
+  { height: 948362, file: 'fixture-948362.json', hasOpcodes: ['T_CETCH', 'T_BURN'] },
+  { height: 948399, file: 'fixture-948399.json', hasOpcodes: ['T_AXFER'] },
+  { height: 948488, file: 'fixture-948488.json', hasOpcodes: ['T_PETCH'] },
+  { height: 948520, file: 'fixture-948520.json', hasOpcodes: ['T_PMINT'] },
+]
+
+describe('additional fixtures', () => {
+  for (const fix of EXTRA_FIXTURES) {
+    const fp = resolve(FIXTURE_DIR, fix.file)
+    if (!existsSync(fp)) continue
+    const block = JSON.parse(readFileSync(fp, 'utf8')) as BitcoinBlock
+    for (let i = 0; i < block.tx.length; i++) {
+      const tx = block.tx[i]
+      const env = extractTacitPayload(tx)
+      if (!env.ok) continue
+      const opName = OPCODE_NAMES[env.payload[0]] || `0x${env.payload[0].toString(16)}`
+
+      test(`#${fix.height} tx[${i}] — ${opName} — envelope decoded`, () => {
+        expect(env.ok).toBe(true)
+        expect(env.payload[0]).toBeDefined()
+      })
+
+      test(`#${fix.height} tx[${i}] — ${opName} — verifyPayload returns result`, () => {
+        const r = verifyPayload(opName, env.payload, tx.txid, fix.height)
+        expect(r).toBeDefined()
+        // At minimum the opcode should be recognized (not all null)
+        const hasAnyValid = r.commitmentValid !== null || r.issuerSigValid !== null || r.burnValid !== null || r.blindingValid !== null
+        expect(hasAnyValid).toBe(true)
+      })
+
+      test(`#${fix.height} tx[${i}] — ${opName} — processBlock produces valid node`, () => {
+        const p = processBlock(block, 0, null)
+        expect(p).not.toBeNull()
+        expect(p!.blockCid).toBeDefined()
+        expect(p!.tacitTxCount).toBeGreaterThan(0)
+      })
+    }
+  }
 })
