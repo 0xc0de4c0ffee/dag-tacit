@@ -53,6 +53,7 @@
 | `0x30` | T_INTENT_ATTEST | AMM.md §5.17 | [`0x30-t-intent-attest.md`](./0x30-t-intent-attest.md) |
 | `0x31` | T_PROTOCOL_FEE_CLAIM | AMM.md §5.18 | [`0x31-t-protocol-fee-claim.md`](./0x31-t-protocol-fee-claim.md) |
 | `0x32` | T_SWAP_VAR | SPEC-SWAP-VAR-AMENDMENT.md §5.20 | [`0x32-t-swap-var.md`](./0x32-t-swap-var.md) |
+| `0x33` | T_SWAP_ROUTE | SPEC-SWAP-ROUTE-AMENDMENT.md §5.22 | [`0x33-t-swap-route.md`](./0x33-t-swap-route.md) |
 
 ## All opcodes (from SPEC.md §1.1 canonical table)
 
@@ -61,9 +62,9 @@ The canonical opcode table in [`tacit-spec/SPEC.md §1.1`](../tacit-spec/SPEC.md
 | Status | Count | Key hex ranges |
 |--------|-------|----------------|
 | ✅ **Shipped** | 30 | `0x21`–`0x28`, `0x37`–`0x38`, `0x43`–`0x47`, `0x49`–`0x4C`, `0x4F`, `0x57`–`0x5C` |
-| 📝 **Drafted** | 28 | `0x2D`–`0x36`, `0x39`–`0x3E`, `0x50`–`0x56`, `0x60`–`0x64` |
+| 📝 **Drafted** | 27 | `0x2D`–`0x36`, `0x39`–`0x3E`, `0x50`–`0x56`, `0x60`–`0x63` |
 | 🔒 **Reserved** | 9 | `0x3F`–`0x42`, `0x48`, `0x4D`–`0x4E`, `0x5D`–`0x5E` |
-| ⬜ **Free** | 150 | `0x5F`, `0x65`–`0xFF` |
+| ⬜ **Free** | 151 | `0x5F`, `0x64`–`0xFF` |
 
 > Each opcode file in this directory contains: wire format table → constraints → TypeScript interface → decode function stub, referencing the authoritative [`tacit-spec/SPEC.md`](../tacit-spec/SPEC.md).
 >

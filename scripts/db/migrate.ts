@@ -2,6 +2,7 @@
 import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { execSync } from 'child_process'
 import { Database } from 'bun:sqlite'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -15,6 +16,12 @@ const outDir = (() => {
   return i >= 0 ? resolve(cliArgs[i + 1]) : resolve(ROOT, 'out', 'sqlite')
 })()
 const DB_PATH = resolve(outDir, 'dag-tacit.sqlite')
+
+// Auto-generate if no migration files exist
+if (!existsSync(MIGRATIONS_DIR) || readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).length === 0) {
+  console.log('[migrate] no migrations found — generating from schema...')
+  execSync('bun drizzle-kit generate', { stdio: 'inherit', cwd: ROOT })
+}
 
 const JOURNAL = resolve(MIGRATIONS_DIR, 'meta', '_journal.json')
 function getApplied(): Set<string> {

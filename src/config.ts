@@ -64,6 +64,12 @@ export const OPCODES_INFO: Record<string, OpcodeInfo> = {
   T_AXFER_VAR_BPP:  { value: 0x3D, name: 'T_AXFER_VAR_BPP',  status: 'drafted', source: 'SPEC-AXFER-BPP-AMENDMENT.md' },
   T_FARM_REFUND:    { value: 0x3E, name: 'T_FARM_REFUND',    status: 'drafted', source: 'SPEC-AMM-FARM-AMENDMENT.md §5.44' },
 
+  // ── Reserved range-LP opcodes (not yet specified, SPEC-AMM-RANGE-LP-AMENDMENT.md TBD) ──
+  T_LP_ADD_RANGE:    { value: 0x3F, name: 'T_LP_ADD_RANGE',    status: 'reserved', source: 'SPEC.md §1.1' },
+  T_LP_REMOVE_RANGE: { value: 0x40, name: 'T_LP_REMOVE_RANGE', status: 'reserved', source: 'SPEC.md §1.1' },
+  T_LP_REPOSITION:   { value: 0x41, name: 'T_LP_REPOSITION',   status: 'reserved', source: 'SPEC.md §1.1' },
+  T_LP_MIGRATE_V:    { value: 0x42, name: 'T_LP_MIGRATE_V',    status: 'reserved', source: 'SPEC.md §1.1' },
+
   // ── Shipped slot & cBTC.tac opcodes (CBTC-ZK / CBTC-TAC amendments) ──
   T_SLOT_MINT:              { value: 0x43, name: 'T_SLOT_MINT',              status: 'shipped', source: 'SPEC-CBTC-ZK-AMENDMENT.md §5.21' },
   T_SLOT_BURN:              { value: 0x44, name: 'T_SLOT_BURN',              status: 'shipped', source: 'SPEC-CBTC-ZK-AMENDMENT.md §5.22' },
@@ -89,12 +95,17 @@ export const OPCODES_INFO: Record<string, OpcodeInfo> = {
   T_PREAUTH_BID:     { value: 0x5B, name: 'T_PREAUTH_BID',     status: 'shipped', source: 'SPEC-PREAUTH-BID-AMENDMENT.md §5.7.11' },
   T_PREAUTH_BID_VAR: { value: 0x5C, name: 'T_PREAUTH_BID_VAR', status: 'shipped', source: 'SPEC-PREAUTH-BID-VAR-AMENDMENT.md §5.7.12' },
 
-  // ── Bridge opcodes (tentative, declared in dapp but not yet in spec table) ──
-  T_BRIDGE_DEPOSIT:  { value: 0x60, name: 'T_BRIDGE_DEPOSIT',  status: 'drafted', source: 'tacit-spec/dapp + worker' },
-  T_BRIDGE_BURN:     { value: 0x61, name: 'T_BRIDGE_BURN',     status: 'drafted', source: 'tacit-spec/dapp + worker' },
-  T_BRIDGE_ROTATE:   { value: 0x62, name: 'T_BRIDGE_ROTATE',   status: 'drafted', source: 'tacit-spec/dapp + worker' },
-  T_BRIDGE_EXPORT:   { value: 0x63, name: 'T_BRIDGE_EXPORT',   status: 'drafted', source: 'tacit-spec/dapp + worker' },
-  T_BRIDGE_IMPORT:   { value: 0x64, name: 'T_BRIDGE_IMPORT',   status: 'drafted', source: 'tacit-spec/dapp + worker' },
+  // ── Reserved preauth follow-ups (SPEC.md §1.1) ──
+  T_PREAUTH_BID_BATCH: { value: 0x5D, name: 'T_PREAUTH_BID_BATCH', status: 'reserved', source: 'SPEC.md §1.1' },
+  T_PREAUTH_MATCH:     { value: 0x5E, name: 'T_PREAUTH_MATCH',     status: 'reserved', source: 'SPEC.md §1.1' },
+
+  // ── Bridge opcodes (SPEC-TETH-BRIDGE-AMENDMENT.md §§5.60-5.63, drafted) ──
+  T_BRIDGE_DEPOSIT:  { value: 0x60, name: 'T_BRIDGE_DEPOSIT',  status: 'drafted', source: 'SPEC-TETH-BRIDGE-AMENDMENT.md §5.60' },
+  T_BRIDGE_BURN:     { value: 0x61, name: 'T_BRIDGE_BURN',     status: 'drafted', source: 'SPEC-TETH-BRIDGE-AMENDMENT.md §5.61' },
+  T_BRIDGE_ROTATE:   { value: 0x62, name: 'T_BRIDGE_ROTATE',   status: 'drafted', source: 'SPEC-TETH-BRIDGE-AMENDMENT.md §5.62' },
+  T_BRIDGE_NOTE:     { value: 0x63, name: 'T_BRIDGE_NOTE',     status: 'drafted', source: 'SPEC-TETH-BRIDGE-AMENDMENT.md §5.63' },
+  // NOTE: BRIDGE.md separately references T_BRIDGE_EXPORT (0x63) and T_BRIDGE_IMPORT (0x64) for
+  // UTXO fungibility — not yet formalized. This may collide with T_BRIDGE_NOTE upstream.
 
   // ── Drafted governance opcodes ──
   T_GOV_PROPOSAL:      { value: 0x50, name: 'T_GOV_PROPOSAL',      status: 'drafted', source: 'SPEC-GOVERNANCE-AMENDMENT.md' },

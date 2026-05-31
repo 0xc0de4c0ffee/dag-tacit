@@ -66,6 +66,9 @@ export function tacitOutputCount(op: number, payload: Uint8Array): number {
         return perClaim === 0 ? 1 : 0
       }
       return 0
+    // SPEC-SWAP-ROUTE §5.22 T_SWAP_ROUTE: 1 receipt UTXO per trader
+    case 0x33:
+      return 1
     // SPEC-CBTC-ZK §5.23 T_SLOT_ROTATE: optional 1 if payload asset field nonzero
     case 0x45:
       return 1
